@@ -919,13 +919,16 @@ module Rjq
     end
 
     def truncate_stream(input, context, args)
-      depth = args.empty? ? numeric(input).to_i : numeric(eval_arg(args, 0, input, context)).to_i
-      stream = args.length > 1 ? args[1].eval(input, context) : input
-      assert_array(stream).map do |pair|
-        pair = assert_array(pair)
-        path = assert_array(pair.fetch(0))
-        truncated = path.drop(depth)
-        pair.length == 1 ? [truncated] : [truncated, pair.fetch(1)]
+      depth = numeric(input).floor
+      Enumerator.new do |yielder|
+        filter_stream(args.fetch(0), input, context).each do |event|
+          event = assert_array(event)
+          path = assert_array(event.fetch(0))
+          next unless path.length > depth
+
+          truncated = path[depth..] || []
+          yielder << (event.length == 1 ? [truncated] : [truncated, event.fetch(1)])
+        end
       end
     end
 

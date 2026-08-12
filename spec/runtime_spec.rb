@@ -339,6 +339,16 @@ RSpec.describe Rjq do
     expect(described_class.run('[. | tostream] | fromstream(.[])', input).to_a).to eq([input])
   end
 
+  it 'truncates a filtered stream lazily using the input depth' do
+    filter = '1 | truncate_stream(([[0]], [[0,1], "a"], [[0,1]]))'
+
+    expect(described_class.run(filter, nil).to_a).to eq([[[1], 'a'], [[1]]])
+    expect(described_class.run('first(0 | truncate_stream(([[0], "a"], error("not reached"))))', nil).to_a)
+      .to eq([[[0], 'a']])
+    expect(described_class.run('(-1.9) | truncate_stream(([[0,1], "a"]))', nil).to_a)
+      .to eq([[[0, 1], 'a']])
+  end
+
   it 'supports SQL-style INDEX and IN' do
     rows = [{ 'id' => 'a', 'v' => 1 }, { 'id' => 'b', 'v' => 2 }]
     expect(described_class.run('INDEX(.id)', rows).to_a).to eq([{ 'a' => rows[0], 'b' => rows[1] }])
