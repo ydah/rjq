@@ -12,6 +12,7 @@ module DifferentialCompat
     Case.new(name: 'module string', filter: '"module"', input: '', flags: ['-n']),
     Case.new(name: 'import string', filter: '"import"', input: '', flags: ['-n']),
     Case.new(name: 'namespace string', filter: '"$foo::bar"', input: '', flags: ['-n']),
+    Case.new(name: 'multiline filter location', filter: "\n$__loc__,\n$__loc__", input: '', flags: ['-n']),
     Case.new(name: 'top-level error', filter: 'error("x")', input: '', flags: ['-n']),
     Case.new(name: 'partial output before error', filter: '1, error("x")', input: '', flags: ['-n']),
     Case.new(name: 'halt', filter: 'halt', input: '', flags: ['-n']),

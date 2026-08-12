@@ -207,6 +207,7 @@ module Rjq
     end
 
     def parse_expression(min_precedence = 0)
+      start_token = current
       left = parse_prefix
       loop do
         op = current_operator
@@ -218,7 +219,7 @@ module Rjq
         consume
         left = parse_infix(left, op, precedence)
       end
-      left
+      add_source_span(left, start_token)
     end
 
     def parse_infix(left, op, precedence)
@@ -249,6 +250,7 @@ module Rjq
     end
 
     def parse_prefix
+      start_token = current
       node =
         case current.type
         when :dot
@@ -280,7 +282,7 @@ module Rjq
         else
           raise error("unexpected token #{current.type}")
         end
-      parse_postfix(node)
+      add_source_span(parse_postfix(node), start_token)
     end
 
     def parse_operator_prefix
@@ -719,6 +721,19 @@ module Rjq
 
     def error(message)
       ParseError.new("#{message} at #{current.filename || '<top-level>'}, line #{current.line}, column #{current.column}")
+    end
+
+    def add_source_span(node, start_token)
+      return node unless node.is_a?(AST::Node)
+
+      finish_token = previous || start_token
+      node.with_source_span(AST::SourceSpan.new(
+                              filename: start_token.filename || '<top-level>',
+                              line: start_token.line,
+                              column: start_token.column,
+                              start_offset: start_token.start_offset,
+                              end_offset: finish_token.end_offset
+                            ))
     end
   end
 end

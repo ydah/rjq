@@ -19,4 +19,13 @@ RSpec.describe Rjq::Parser do
 
     expect(filters.map { |filter| described_class.new(filter).parse }).to all(be_a(Rjq::AST::Program))
   end
+
+
+  it 'attaches source spans to parsed expressions and variables' do
+    program = described_class.new("\n$__loc__", source_name: '/tmp/filter.jq').parse
+
+    expect(program.body.source_span).to have_attributes(
+      filename: '/tmp/filter.jq', line: 2, column: 1, start_offset: 1, end_offset: 9
+    )
+  end
 end

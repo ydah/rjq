@@ -54,7 +54,7 @@ module Rjq
       when AST::Format
         compile_format(node)
       when AST::Variable
-        [instruction(:variable, ivar(node, :name))]
+        [instruction(:variable, node.name, nil, loc: node.source_span)]
       when AST::Field
         compile_node(ivar(node, :base)) + [instruction(:field, ivar(node, :name))]
       when AST::Index
@@ -238,8 +238,8 @@ module Rjq
       @constant_indices[key] = @constants.length - 1
     end
 
-    def instruction(op, arg1 = nil, arg2 = nil)
-      Instruction.new(op: op, arg1: arg1, arg2: arg2, loc: nil)
+    def instruction(op, arg1 = nil, arg2 = nil, loc: nil)
+      Instruction.new(op: op, arg1: arg1, arg2: arg2, loc: loc)
     end
 
     def ivar(object, name)

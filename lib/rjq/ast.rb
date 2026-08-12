@@ -2,6 +2,8 @@
 
 module Rjq
   module AST
+    SourceSpan = Struct.new(:filename, :line, :column, :start_offset, :end_offset, keyword_init: true)
+
     class Context
       attr_reader :variables, :functions, :options
 
@@ -29,6 +31,13 @@ module Rjq
     end
 
     class Node
+      attr_reader :source_span
+
+      def with_source_span(span)
+        @source_span = span
+        self
+      end
+
       def eval(_input, _context)
         raise NotImplementedError, "#{self.class}#eval"
       end
@@ -238,6 +247,8 @@ module Rjq
     end
 
     class Variable < Node
+      attr_reader :name
+
       def initialize(name)
         @name = name
       end
@@ -251,8 +262,8 @@ module Rjq
           return [{ 'positional' => positional, 'named' => named }]
         end
         if @name == '__loc__'
-          return [{ 'file' => context.options.fetch(:current_filename, '<top-level>'),
-                    'line' => 1 }]
+          return [{ 'file' => source_span&.filename || context.options.fetch(:source_path, '<top-level>'),
+                    'line' => source_span&.line || 1 }]
         end
 
         raise RuntimeError, "variable $#{@name} is not defined" unless context.variables.key?(@name)

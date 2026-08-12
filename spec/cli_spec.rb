@@ -4,6 +4,21 @@ require 'spec_helper'
 require 'tmpdir'
 
 RSpec.describe Rjq::CLI do
+  it 'reports locations from filter files' do
+    Dir.mktmpdir do |dir|
+      filter_path = File.join(dir, 'location.jq')
+      File.write(filter_path, "\n$__loc__")
+      out = StringIO.new
+      err = StringIO.new
+
+      code = described_class.new(['-nc', '-f', filter_path], stdin: StringIO.new, stdout: out, stderr: err).run
+
+      expect(code).to eq(0)
+      expect(err.string).to eq('')
+      expect(Rjq::JSON::Parser.parse_one(out.string)).to eq({ 'file' => File.realpath(filter_path), 'line' => 2 })
+    end
+  end
+
   it 'runs a compact-output filter against stdin' do
     out = StringIO.new
     err = StringIO.new

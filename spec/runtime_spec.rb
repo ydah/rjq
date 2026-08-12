@@ -4,6 +4,15 @@ require 'spec_helper'
 require 'tmpdir'
 
 RSpec.describe Rjq do
+  it 'reports multiline filter source locations independently of input locations' do
+    filter = "\n$__loc__,\n$__loc__"
+
+    expect(described_class.run(filter, nil).to_a).to eq([
+      { 'file' => '<top-level>', 'line' => 2 },
+      { 'file' => '<top-level>', 'line' => 3 }
+    ])
+  end
+
   it 'runs identity, field access, pipes, and iteration' do
     expect(described_class.run('.foo | .[]', { 'foo' => [1, 2, 3] }).to_a).to eq([1, 2, 3])
   end

@@ -121,7 +121,7 @@ module Rjq
       when :load_const then stack << value_stream(Value.deep_copy(@program.program.constants.fetch(instruction.arg1)))
       when :string_interp then stack << values_stream(evaluate_string(instruction.arg1, input, context))
       when :format then stack << values_stream(evaluate_format(instruction.arg1, instruction.arg2, input, context))
-      when :variable then stack << values_stream(evaluate_variable(instruction.arg1, context))
+      when :variable then stack << values_stream(evaluate_variable(instruction.arg1, context, instruction.loc))
       when :field then stack << map_stream(stack.pop) { |value| read_field(value, instruction.arg1) }
       when :index_const then stack << map_stream(stack.pop) { |value| read_index(value, instruction.arg1) }
       when :index_filter then stack << index_filter_stream(stack.pop, instruction.arg1, input, context)
@@ -802,7 +802,7 @@ module Rjq
       contexts
     end
 
-    def evaluate_variable(name, context)
+    def evaluate_variable(name, context, loc = nil)
       return [ENV.to_h] if name == 'ENV'
 
       if name == 'ARGS'
@@ -810,7 +810,10 @@ module Rjq
         named = context.variables.fetch('ARGS.named', {})
         return [{ 'positional' => positional, 'named' => named }]
       end
-      return [{ 'file' => context.options.fetch(:current_filename, '<top-level>'), 'line' => 1 }] if name == '__loc__'
+      if name == '__loc__'
+        return [{ 'file' => loc&.filename || context.options.fetch(:source_path, '<top-level>'),
+                  'line' => loc&.line || 1 }]
+      end
 
       raise RuntimeError, "variable $#{name} is not defined" unless context.variables.key?(name)
 

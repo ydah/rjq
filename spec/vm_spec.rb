@@ -3,6 +3,12 @@
 require 'spec_helper'
 
 RSpec.describe Rjq::VM do
+  it 'preserves variable source locations in bytecode' do
+    instruction = Rjq.compile("\n$__loc__", source_path: '/tmp/filter.jq').instructions.first
+
+    expect(instruction.loc).to have_attributes(filename: '/tmp/filter.jq', line: 2, column: 1)
+  end
+
   it 'compiles simple path filters into bytecode instructions' do
     program = Rjq.compile('.foo | .[]')
 
