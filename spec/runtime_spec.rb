@@ -769,7 +769,7 @@ RSpec.describe Rjq do
     expect(described_class.run('1 | select(true,true)', nil).to_a).to eq([1, 1])
     expect(described_class.run('"abc" | startswith(("a","b"))', nil).to_a).to eq([true, false])
     expect(described_class.run('[1,2] | has((0,1,2))', nil).to_a).to eq([true, true, false])
-    expect(described_class.run('3 | pow((2,3); (1,2))', nil).to_a).to eq([2, 4, 3, 9])
+    expect(described_class.run('3 | pow((2,3); (1,2))', nil).to_a).to eq([2, 3, 4, 9])
     expect(described_class.run('@html "x\(1,2)y"', nil).to_a).to eq(%w[x1y x2y])
   end
 
@@ -1036,6 +1036,209 @@ RSpec.describe Rjq do
     rows = [{ 'id' => 'a', 'v' => 1 }, { 'id' => 'b', 'v' => 2 }]
     expect(described_class.run('INDEX(.id)', rows).to_a).to eq([{ 'a' => rows[0], 'b' => rows[1] }])
     expect(described_class.run('IN(["x", "y"])', 'y').to_a).to eq([true])
+  end
+
+  it 'preserves predicate and child generators in all and walk' do
+    expect(described_class.run('all(.[]; (true,false))', [1]).to_a).to eq([false])
+    expect(described_class.run('all(.[]; empty)', [1]).to_a).to eq([true])
+    expect(described_class.run('[any, all, any(.), all(.)]', { 'a' => true, 'b' => false }).to_a)
+      .to eq([[true, false, true, false]])
+    expect(described_class.run('[any((true,error("late"))), all((false,error("late")))]', [0]).to_a)
+      .to eq([[true, false]])
+    expect { described_class.run('any(.)', nil).to_a }
+      .to raise_error(Rjq::TypeError, 'Cannot iterate over null (null)')
+    expect(described_class.run('walk((.,.))', [1]).to_a).to eq([[1, 1], [1, 1]])
+    expect(described_class.run('walk((.,.))', { 'a' => 1 }).to_a).to eq([{ 'a' => 1 }, { 'a' => 1 }])
+
+    array_outputs = []
+    expect do
+      described_class.run('walk((.,error("late")))', [1]).each { |value| array_outputs << value }
+    end.to raise_error(Rjq::ErrorValue, 'late')
+    expect(array_outputs).to eq([])
+
+    object_outputs = []
+    expect do
+      described_class.run('walk((.,error("late")))', { 'a' => 1 }).each { |value| object_outputs << value }
+    end.to raise_error(Rjq::ErrorValue, 'late')
+    expect(object_outputs).to eq([{ 'a' => 1 }])
+
+    stderr = StringIO.new
+    expect(described_class.run('walk(if type=="number" then (.,debug) else . end)',
+                               { 'a' => 1, 'b' => 2 }, stderr: stderr).to_a)
+      .to eq([{ 'a' => 1, 'b' => 2 }])
+    expect(stderr.string).to be_empty
+    expect(described_class.run('walk(if type=="number" and .==1 then (.,error("late")) else . end)',
+                               { 'a' => 1, 'b' => 2 }).to_a)
+      .to eq([{ 'a' => 1, 'b' => 2 }])
+  end
+
+  it 'rejects non-string from_entries keys without coercion' do
+    [0, true, [], {}].each do |key|
+      expect { described_class.run('from_entries', [{ 'key' => key, 'value' => 1 }]).to_a }
+        .to raise_error(Rjq::TypeError, /Cannot use .* as object key/)
+    end
+    expect { described_class.run('from_entries', [{ 'key' => false, 'value' => 1 }]).to_a }
+      .to raise_error(Rjq::TypeError, 'Cannot use null (null) as object key')
+    expect(described_class.run('from_entries', [{ 'key' => false, 'Key' => 'fallback', 'value' => 1 }]).to_a)
+      .to eq([{ 'fallback' => 1 }])
+  end
+
+  it 'preserves every truthy paths predicate output' do
+    expect(described_class.run('paths((true,true))', [1]).to_a).to eq([[0], [0]])
+    expect(described_class.run('paths((false,true,false))', [1]).to_a).to eq([[0]])
+    expect(described_class.run('paths(empty)', [1]).to_a).to eq([])
+
+    expect { described_class.run('paths((true,error("root")))', 1).to_a }
+      .to raise_error(Rjq::ErrorValue, 'root')
+    stderr = StringIO.new
+    expect(described_class.run('paths(debug)', [1], stderr: stderr).to_a).to eq([[0]])
+    expect(stderr.string.lines.length).to eq(2)
+  end
+
+  it 'streams select outputs and lazily takes map_values updates' do
+    selected = []
+    expect do
+      described_class.run('select((true,error("late")))', [1]).each { |value| selected << value }
+    end.to raise_error(Rjq::ErrorValue, 'late')
+    expect(selected).to eq([[1]])
+
+    expect(described_class.run('map_values((.,error("late")))', [1]).to_a).to eq([[1]])
+    expect(described_class.run('[map_values(null),map_values(false)]', [1, 2]).to_a)
+      .to eq([[[nil, nil], [false, false]]])
+    stderr = StringIO.new
+    expect(described_class.run('map_values((.,debug))', { 'a' => 1 }, stderr: stderr).to_a)
+      .to eq([{ 'a' => 1 }])
+    expect(stderr.string).to be_empty
+    expect(described_class.run('try map_values(.) catch ["caught",.]', 1).to_a)
+      .to eq([['caught', 'Cannot iterate over number (1)']])
+  end
+
+  it 'keeps constructor and key-filter partial values internal on errors' do
+    ['map((.,error("late")))', 'with_entries((.,error("late")))',
+     'sort_by((.,error("late")))', 'group_by((.,error("late")))',
+     'unique_by((.,error("late")))', 'min_by((.,error("late")))',
+     'max_by((.,error("late")))'].each do |filter|
+      outputs = []
+      expect { described_class.run(filter, [1]).each { |value| outputs << value } }
+        .to raise_error(Rjq::ErrorValue, 'late')
+      expect(outputs).to eq([])
+    end
+  end
+
+  it 'keeps filter argument partial values at their jq streaming boundaries' do
+    expect { described_class.run('last((1,error("late")))', nil).to_a }
+      .to raise_error(Rjq::ErrorValue, 'late')
+    expect(described_class.run('IN((1,error("late"));.)', 1).to_a).to eq([true])
+    expect { described_class.run('INDEX((1,error("late"));.)', nil).to_a }
+      .to raise_error(Rjq::ErrorValue, 'late')
+
+    limited = []
+    expect do
+      described_class.run('limit(2;(1,error("late")))', nil).each { |value| limited << value }
+    end.to raise_error(Rjq::ErrorValue, 'late')
+    expect(limited).to eq([1])
+
+    until_outputs = []
+    expect do
+      described_class.run('until((true,error("late"));.)', 0).each { |value| until_outputs << value }
+    end.to raise_error(Rjq::ErrorValue, 'late')
+    expect(until_outputs).to eq([0])
+
+    while_outputs = []
+    expect do
+      described_class.run('while((true,error("late"));empty)', 0).each { |value| while_outputs << value }
+    end.to raise_error(Rjq::ErrorValue, 'late')
+    expect(while_outputs).to eq([0])
+  end
+
+  it 'streams ordinary builtin argument products in jq order' do
+    expect(described_class.run('pow((2,3);(4,5))', nil).to_a).to eq([16, 81, 32, 243])
+
+    index_outputs = []
+    expect do
+      described_class.run('index((1,error("late")))', [1, 2]).each { |value| index_outputs << value }
+    end.to raise_error(Rjq::ErrorValue, 'late')
+    expect(index_outputs).to eq([0])
+  end
+
+  it 'preserves jq-defined builtin argument order and input effects' do
+    io = StringIO.new("10\n20\n30\n40\n")
+    expect(described_class.run_stream('range((0,input);(2,input))', io: io, opts: { null_input: true }).to_a)
+      .to eq([0, 1, *(0...10), *(20...30)])
+
+    stderr = StringIO.new
+    result = described_class.run('"ab"|scan(("a",("b"|debug));("",("i"|debug)))', nil, stderr: stderr).to_a
+    expect(result).to eq(%w[a a b b])
+    expect(stderr.string).to eq("[\"DEBUG:\",\"i\"]\n[\"DEBUG:\",\"b\"]\n[\"DEBUG:\",\"i\"]\n")
+
+    expect(described_class.run('sub(("a","b");"x";("","g"))', 'ab').to_a)
+      .to eq(%w[xb xb ax ax])
+  end
+
+  it 'converts invalid path and flatten inputs to controlled errors' do
+    expect { described_class.run('getpath(1)', {}).to_a }
+      .to raise_error(Rjq::TypeError, 'Path must be specified as an array')
+    expect { described_class.run('setpath(1;0)', {}).to_a }
+      .to raise_error(Rjq::TypeError, 'Path must be specified as an array')
+
+    outputs = []
+    io = StringIO.new("10\n20\n")
+    stream = described_class.run_stream('setpath((["a"],input);(1,input))',
+                                        io: io, opts: { null_input: true })
+    expect { stream.each { |value| outputs << value } }
+      .to raise_error(Rjq::TypeError, 'Path must be specified as an array')
+    expect(outputs).to eq([{ 'a' => 1 }])
+
+    expect(described_class.run('flatten("x")', {}).to_a).to eq([[]])
+    expect { described_class.run('flatten("x")', [[1]]).to_a }
+      .to raise_error(Rjq::TypeError, /cannot be subtracted/)
+    expect { described_class.run('flatten(null)', []).to_a }
+      .to raise_error(Rjq::RuntimeError, 'flatten depth must not be negative')
+    expect { described_class.run('setpath([true];1)', nil).to_a }
+      .to raise_error(Rjq::TypeError, 'Cannot index null with boolean')
+    expect { described_class.run('has([])', {}).to_a }
+      .to raise_error(Rjq::TypeError, 'Cannot check whether object has a array key')
+
+    deep = 20_000.times.reduce(1) { |value, _| [value] }
+    expect(described_class.run('flatten', deep).to_a).to eq([[1]])
+  end
+
+  it 'collects split flag streams within one result constructor' do
+    expect(described_class.run('split("a";("","i"))', 'ab').to_a).to eq([['', '', 'b']])
+    expect(described_class.run('splits("a";("","i"))', 'ab').to_a).to eq(['', '', 'b'])
+    expect(described_class.run('split("a";empty)', 'ab').to_a).to eq([['ab']])
+
+    outputs = []
+    expect do
+      described_class.run('split("a";("",error("late")))', 'ab').each { |value| outputs << value }
+    end.to raise_error(Rjq::ErrorValue, 'late')
+    expect(outputs).to be_empty
+  end
+
+  it 'keeps path constructors internal while preserving path partial output once' do
+    path_outputs = []
+    expect do
+      described_class.run('path((.a,error("late")))', { 'a' => 1 }).each { |value| path_outputs << value }
+    end.to raise_error(Rjq::ErrorValue, 'late')
+    expect(path_outputs).to eq([['a']])
+
+    ['del((.a,error("late")))', 'pick((.a,error("late")))'].each do |filter|
+      outputs = []
+      expect { described_class.run(filter, { 'a' => 1 }).each { |value| outputs << value } }
+        .to raise_error(Rjq::ErrorValue, 'late')
+      expect(outputs).to eq([])
+    end
+  end
+
+  it 'reconstructs and streams multiple fromstream roots before errors' do
+    filter = 'fromstream(([[0],1],[[0]],[[0],2],[[0]]))'
+    expect(described_class.run(filter, nil).to_a).to eq([[1], [2]])
+
+    outputs = []
+    expect do
+      described_class.run('fromstream(([[],1],error("late")))', nil).each { |value| outputs << value }
+    end.to raise_error(Rjq::ErrorValue, 'late')
+    expect(outputs).to eq([1])
   end
 
   it 'supports base32 formatting' do

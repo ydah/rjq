@@ -5,6 +5,7 @@ module Rjq
     module_function
 
     def get(value, path)
+      assert_path(path)
       path.reduce(value) { |current, key| read_index(current, key) }
     end
 
@@ -32,9 +33,13 @@ module Rjq
     end
 
     def set(value, path, new_value)
+      assert_path(path)
       return new_value if path.empty?
 
-      value = container_for(path.first) if value.nil?
+      if value.nil?
+        read_index(nil, path.first)
+        value = container_for(path.first)
+      end
       parent = ensure_parent(value, path)
       key = path.last
       if slice_component?(key)
@@ -46,9 +51,9 @@ module Rjq
       when Array
         parent[key] = new_value
       when Hash
-        raise TypeError, cannot_index_message(parent, key) if key.is_a?(Numeric)
+        raise TypeError, cannot_index_message(parent, key) unless key.is_a?(String)
 
-        parent[key.to_s] = new_value
+        parent[key] = new_value
       else
         raise TypeError, cannot_index_message(parent, key)
       end
@@ -56,6 +61,7 @@ module Rjq
     end
 
     def delete(value, path)
+      assert_path(path)
       return nil if path.empty?
 
       parent = get(value, path[0...-1])
@@ -67,13 +73,14 @@ module Rjq
       end
       case parent
       when Array
-        if key.is_a?(Numeric) && !(key.respond_to?(:nan?) && key.nan?)
-          key = key.floor
-          key = parent.length + key if key.negative?
-          parent.delete_at(key) unless key.negative?
-        end
+        raise TypeError, cannot_index_message(parent, key) unless key.is_a?(Numeric)
+        return value if key.respond_to?(:nan?) && key.nan?
+
+        key = key.floor
+        key = parent.length + key if key.negative?
+        parent.delete_at(key) unless key.negative?
       when Hash
-        raise TypeError, cannot_index_message(parent, key) if key.is_a?(Numeric)
+        raise TypeError, cannot_index_message(parent, key) unless key.is_a?(String)
 
         parent.delete(key)
       end
@@ -99,6 +106,12 @@ module Rjq
       out
     end
 
+    def assert_path(path)
+      raise TypeError, 'Path must be specified as an array' unless path.is_a?(Array)
+
+      path
+    end
+
     def materialize_path(node)
       path = []
       while node
@@ -116,13 +129,19 @@ module Rjq
         case current
         when Array
           key = normalize_array_key(current, key)
-          current[key] = container_for(next_key) if current[key].nil?
+          if current[key].nil?
+            read_index(nil, next_key)
+            current[key] = container_for(next_key)
+          end
           current = current[key]
         when Hash
-          raise TypeError, cannot_index_message(current, key) if key.is_a?(Numeric)
+          raise TypeError, cannot_index_message(current, key) unless key.is_a?(String)
 
-          current[key.to_s] = container_for(next_key) if current[key.to_s].nil?
-          current = current[key.to_s]
+          if current[key].nil?
+            read_index(nil, next_key)
+            current[key] = container_for(next_key)
+          end
+          current = current[key]
         else
           raise TypeError, cannot_index_message(current, key)
         end

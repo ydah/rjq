@@ -332,7 +332,7 @@ module Rjq
       Enumerator.new do |yielder|
         paths_for_block(block.instructions, input, context).each { |path| yielder << path }
       rescue Rjq::RuntimeError => e
-        Array(e.outputs).each { |path| yielder << path }
+        e.take_outputs.each { |path| yielder << path }
         raise
       end
     end

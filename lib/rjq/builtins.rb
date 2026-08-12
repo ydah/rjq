@@ -57,8 +57,10 @@ module Rjq
       'truncate_stream' => [0], 'min_by' => [0], 'max_by' => [0], 'sort_by' => [0], 'group_by' => [0],
       'GROUP_BY' => [0], 'unique_by' => [0], 'UNIQUE_BY' => [0], 'first' => [0], 'last' => [0], 'nth' => [0, 1],
       'limit' => [1], 'until' => [0, 1], 'while' => [0, 1], 'repeat' => [0], 'isempty' => [0],
-      'sub' => [1], 'gsub' => [1]
+      'split' => [1], 'splits' => [1], 'sub' => [1], 'gsub' => [1]
     }.transform_values(&:freeze).freeze
+    LEFT_OUTER_ARGUMENT_BUILTINS = %w[gsub range scan split splits sub].freeze
+    FLATTEN_UNBOUNDED = Object.new.freeze
 
     module_function
 
@@ -67,15 +69,8 @@ module Rjq
     end
 
     def call_stream(name, input, context, args)
-      argument_sets = args.each_with_index.map do |argument, index|
-        if FILTER_ARGUMENT_POSITIONS.fetch(name, []).include?(index)
-          [argument]
-        else
-          argument.eval(input, context).map { |value| AST::Literal.new(value) }
-        end
-      end
       Enumerator.new do |yielder|
-        cartesian(argument_sets).each do |resolved_args|
+        each_resolved_argument_set(name, args, input, context) do |resolved_args|
           dispatch(name, input, context, resolved_args).each { |value| yielder << value }
         end
       end
@@ -261,7 +256,7 @@ module Rjq
       when 'tostream'
         to_stream(input)
       when 'fromstream'
-        [from_stream(args.empty? ? input : args.fetch(0).eval(input, context))]
+        from_stream(filter_stream(args.fetch(0), input, context))
       when 'truncate_stream'
         truncate_stream(input, context, args)
       when 'min'
@@ -430,13 +425,22 @@ module Rjq
     def has?(container, key)
       case container
       when Array
-        key.is_a?(Numeric) && key.finite? && key >= 0 && key.floor < container.length
+        unless key.is_a?(Numeric)
+          raise TypeError, "Cannot check whether array has a #{Value.type_of(key)} key"
+        end
+
+        key.finite? && key >= 0 && key.floor < container.length
       when Hash
-        raise TypeError, 'Cannot check whether object has a number key' if key.is_a?(Numeric)
+        unless key.is_a?(String)
+          raise TypeError, "Cannot check whether object has a #{Value.type_of(key)} key"
+        end
 
         container.key?(key)
-      else
+      when NilClass
         false
+      else
+        raise TypeError,
+              "Cannot check whether #{Value.type_of(container)} has a #{Value.type_of(key)} key"
       end
     end
 
@@ -481,39 +485,53 @@ module Rjq
     def any?(input, context, args)
       if args.length == 2
         return source_any?(args[0], input, context) do |value|
-          args[1].eval(value, context).any? { |result| Value.truthy?(result) }
+          source_any?(args[1], value, context) { |result| Value.truthy?(result) }
         end
       end
 
-      values = args.empty? ? assert_array(input) : input_values(input, context, args.first)
+      values = args.empty? ? iterable_values(input) : input_values(input, context, args.first)
       values.any? { |value| Value.truthy?(value) }
     end
 
     def all?(input, context, args)
       if args.length == 2
         return source_all?(args[0], input, context) do |value|
-          args[1].eval(value, context).any? { |result| Value.truthy?(result) }
+          source_all?(args[1], value, context) { |result| Value.truthy?(result) }
         end
       end
 
-      values = args.empty? ? assert_array(input) : input_values(input, context, args.first)
+      values = args.empty? ? iterable_values(input) : input_values(input, context, args.first)
       values.all? { |value| Value.truthy?(value) }
     end
 
-    def flatten(value, depth = nil)
-      raise RuntimeError, 'flatten depth must not be negative' if depth&.negative?
-      unless value.is_a?(Array)
-        raise TypeError, "Cannot iterate over #{Value.type_of(value)} (#{JSON::Dumper.dump(value, indent: nil)})"
+    def flatten(value, depth = FLATTEN_UNBOUNDED)
+      if !depth.equal?(FLATTEN_UNBOUNDED) && Value.compare(depth, 0).negative?
+        raise RuntimeError, 'flatten depth must not be negative'
       end
-      return value if depth && depth <= 0
 
-      value.flat_map do |item|
-        if item.is_a?(Array)
-          flatten(item, depth.nil? ? nil : depth - 1)
-        else
-          item
+      flatten_items(iterable_values(value), depth)
+    end
+
+    def flatten_items(items, depth)
+      output = []
+      stack = items.to_a.reverse_each.map { |item| [item, depth] }
+      until stack.empty?
+        item, item_depth = stack.pop
+        unbounded = item_depth.equal?(FLATTEN_UNBOUNDED)
+        unless item.is_a?(Array) && (unbounded || !Value.equal?(item_depth, 0))
+          output << item
+          next
         end
+
+        next_depth = unbounded ? FLATTEN_UNBOUNDED : subtract_flatten_depth(item_depth)
+        item.reverse_each { |child| stack << [child, next_depth] }
       end
+      output
+    end
+
+    def subtract_flatten_depth(depth)
+      AST::BinaryOp.new(AST::Literal.new(depth), '-', AST::Literal.new(1))
+                   .eval(nil, AST::Context.new).first
     end
 
     def range(input, context, args)
@@ -697,36 +715,51 @@ module Rjq
 
     def from_entries(entries)
       entries.each_with_object({}) do |entry, object|
-        key = entry['key'] || entry[:key] || entry['Key'] || entry['name'] || entry['Name']
+        key = %w[key Key name Name].lazy.map { |name| Path.read_index(entry, name) }
+                                  .find { |candidate| Value.truthy?(candidate) }
+        unless key.is_a?(String)
+          raise TypeError,
+                "Cannot use #{Value.type_of(key)} (#{JSON::Dumper.dump(key, indent: nil)}) as object key"
+        end
         value = entry.key?('value') ? entry['value'] : entry['Value']
-        object[key.to_s] = value
+        object[key] = value
       end
     end
 
     def map_entries(input, context, filter)
-      to_entries(input).flat_map { |entry| filter.eval(entry, context) }
+      to_entries(input).flat_map do |entry|
+        collect_filter(filter, entry, context)
+      end
     end
 
     def select(input, context, filter)
-      filter.eval(input, context).filter_map { |value| input if Value.truthy?(value) }
+      Enumerator.new do |yielder|
+        filter_stream(filter, input, context).each do |value|
+          yielder << input if Value.truthy?(value)
+        end
+      end
     end
 
     def map_filter(value, context, filter)
       items = value.is_a?(Hash) ? value.values : assert_array(value)
-      items.flat_map { |item| filter.eval(item, context) }
+      items.flat_map { |item| collect_filter(filter, item, context) }
     end
 
     def map_values(value, context, filter)
       case value
       when Array
-        value.filter_map { |item| filter.eval(item, context).first }
+        value.each_with_object([]) do |item, out|
+          outputs = filter_stream(filter, item, context).take(1)
+          out << outputs.first unless outputs.empty?
+        end
       when Hash
         value.each_with_object({}) do |(key, item), out|
-          outputs = filter.eval(item, context)
+          outputs = filter_stream(filter, item, context).take(1)
           out[key] = outputs.first unless outputs.empty?
         end
       else
-        raise TypeError, "cannot map values of #{Value.type_of(value)}"
+        raise TypeError,
+              "Cannot iterate over #{Value.type_of(value)} (#{JSON::Dumper.dump(value, indent: nil)})"
       end
     end
 
@@ -751,10 +784,7 @@ module Rjq
     def split(input, context, args)
       string = assert_string(input)
       if args.length > 1
-        regex, flags = regexp(input, context, args)
-        matches = string.to_enum(:scan, regex).map { Regexp.last_match }
-        matches.reject! { |match| match[0].empty? } if flags.include?('n')
-        return split_at_matches(string, matches)
+        return split_at_matches(string, regexp_matches(input, context, args, string))
       end
 
       separator = assert_string(eval_arg(args, 0, input, context))
@@ -862,7 +892,7 @@ module Rjq
 
     def delete_paths(input, context, args)
       copy = Value.deep_copy(input)
-      paths = args.flat_map { |arg| arg.paths(input, context) }
+      paths = args.flat_map { |arg| collect_paths(arg, input, context) }
       return nil if paths.any?(&:empty?)
 
       ordered_delete_paths(paths).each { |path| Path.delete(copy, path) }
@@ -870,7 +900,7 @@ module Rjq
     end
 
     def pick(input, context, args)
-      paths = args.flat_map { |arg| arg.paths(input, context) }
+      paths = args.flat_map { |arg| collect_paths(arg, input, context) }
       return Value.deep_copy(input) if paths.any?(&:empty?)
 
       paths.each { |path| validate_pick_path(path) }
@@ -889,36 +919,39 @@ module Rjq
     end
 
     def container_for_path(path)
-      path.first.is_a?(Integer) ? [] : {}
+      path.first.is_a?(Numeric) ? [] : {}
     end
 
     def paths_builtin(input, context, args, leaves_only:)
-      paths = Path.paths(input, leaves_only: leaves_only).reject(&:empty?)
-      return paths if args.empty?
+      paths = Path.paths(input, leaves_only: leaves_only)
+      return paths.reject(&:empty?) if args.empty?
 
       filter = args.fetch(0)
-      paths.select do |path|
-        filter.eval(Path.get(input, path), context).any? { |value| Value.truthy?(value) }
+      Enumerator.new do |yielder|
+        paths.each do |path|
+          filter_stream(filter, Path.get(input, path), context).each do |value|
+            yielder << path if !path.empty? && Value.truthy?(value)
+          end
+        end
       end
     end
 
     def walk(input, context, filter)
-      transformed =
-        case input
-        when Array
-          input.each_with_object([]) do |item, out|
-            values = walk(item, context, filter)
-            out << values.first unless values.empty?
+      Enumerator.new do |yielder|
+        transformed =
+          case input
+          when Array
+            input.flat_map { |item| walk(item, context, filter).to_a }
+          when Hash
+            input.each_with_object({}) do |(key, value), out|
+              values = walk(value, context, filter).take(1)
+              out[key] = values.first unless values.empty?
+            end
+          else
+            input
           end
-        when Hash
-          input.each_with_object({}) do |(key, value), out|
-            values = walk(value, context, filter)
-            out[key] = values.first unless values.empty?
-          end
-        else
-          input
-        end
-      filter.eval(transformed, context)
+        filter_stream(filter, transformed, context).each { |value| yielder << value }
+      end
     end
 
     def to_stream(value)
@@ -950,22 +983,30 @@ module Rjq
     end
 
     def from_stream(stream)
-      pairs = assert_array(stream)
-      root = {}
-      pairs.each do |pair|
-        pair = assert_array(pair)
-        next if pair.length == 1
+      Enumerator.new do |yielder|
+        root = nil
+        stream.each do |event|
+          event = assert_array(event)
+          path = assert_array(event.first)
+          if event.length == 1
+            if path.length == 1 && !root.nil?
+              yielder << root
+              root = nil
+            end
+            next
+          end
 
-        path, value = pair
-        path = assert_array(path)
-        if path.empty?
-          root = value
-        else
-          root = [] if root == {} && path.first.is_a?(Integer)
-          Path.set(root, path, value)
+          value = event[1]
+          if path.empty?
+            yielder << value
+            root = nil
+          else
+            root ||= container_for_path(path)
+            Path.set(root, path, value)
+          end
         end
+        yielder << root unless root.nil?
       end
-      root
     end
 
     def truncate_stream(input, context, args)
@@ -1068,7 +1109,7 @@ module Rjq
     def index_sql(input, context, args)
       source =
         if args.length == 2
-          args[0].eval(input, context)
+          collect_filter(args[0], input, context)
         else
           assert_array(input)
         end
@@ -1089,18 +1130,18 @@ module Rjq
 
     def in_sql?(input, context, args)
       if args.length == 1
-        values = args.fetch(0).eval(input, context)
+        values = collect_filter(args.fetch(0), input, context)
         values = values.first if values.length == 1 && values.first.is_a?(Array)
         return values.any? { |item| Value.equal?(item, input) }
       end
 
-      source = args.fetch(0).eval(input, context)
-      needles = args.fetch(1).eval(input, context)
-      needles.any? { |needle| source.any? { |item| Value.equal?(item, needle) } }
+      source_any?(args.fetch(0), input, context) do |item|
+        source_any?(args.fetch(1), input, context) { |needle| Value.equal?(item, needle) }
+      end
     end
 
     def filter_key(value, context, filter)
-      result = filter.eval(value, context)
+      result = collect_filter(filter, value, context)
       result.length == 1 ? result.first : result
     end
 
@@ -1268,7 +1309,7 @@ module Rjq
     end
 
     def last_builtin(input, context, args)
-      values = args.empty? ? assert_array(input) : args.fetch(0).eval(input, context)
+      values = args.empty? ? assert_array(input) : collect_filter(args.fetch(0), input, context)
       values.empty? ? [] : [values.last]
     end
 
@@ -1318,11 +1359,18 @@ module Rjq
     end
 
     def limit(input, context, args)
-      args.fetch(0).eval(input, context).flat_map do |raw_count|
-        count = numeric(raw_count).ceil
-        next [] if count <= 0
+      Enumerator.new do |yielder|
+        filter_stream(args.fetch(0), input, context).each do |raw_count|
+          count = numeric(raw_count).ceil
+          next if count <= 0
 
-        args.fetch(1).take(input, context, count)
+          emitted = 0
+          filter_stream(args.fetch(1), input, context).each do |value|
+            yielder << value
+            emitted += 1
+            break if emitted >= count
+          end
+        end
       end
     end
 
@@ -1331,20 +1379,37 @@ module Rjq
       Enumerator.new do |yielder|
         tasks = [[:visit, input]]
         until tasks.empty?
-          type, value = tasks.pop
+          type, value, state = tasks.pop
           if type == :emit
             yielder << value
             next
           end
+          if type == :visit
+            tasks << [:condition, value, filter_stream(condition, value, context)]
+            next
+          end
 
-          actions = condition.eval(value, context).flat_map do |result|
-            if Value.truthy?(result)
-              [[:emit, value]]
-            else
-              update.eval(value, context).map { |next_value| [:visit, next_value] }
+          if type == :condition
+            begin
+              result = state.next
+              tasks << [:condition, value, state]
+              if Value.truthy?(result)
+                tasks << [:emit, value]
+              else
+                tasks << [:updates, value, filter_stream(update, value, context)]
+              end
+            rescue StopIteration
+              nil
+            end
+          elsif type == :updates
+            begin
+              next_value = state.next
+              tasks << [:updates, value, state]
+              tasks << [:visit, next_value]
+            rescue StopIteration
+              nil
             end
           end
-          tasks.concat(actions.reverse)
         end
       end
     end
@@ -1354,18 +1419,36 @@ module Rjq
       Enumerator.new do |yielder|
         tasks = [[:visit, input]]
         until tasks.empty?
-          type, value = tasks.pop
+          type, value, state = tasks.pop
           if type == :emit
             yielder << value
             next
           end
-
-          actions = condition.eval(value, context).flat_map do |result|
-            next [] unless Value.truthy?(result)
-
-            [[:emit, value]] + update.eval(value, context).map { |next_value| [:visit, next_value] }
+          if type == :visit
+            tasks << [:condition, value, filter_stream(condition, value, context)]
+            next
           end
-          tasks.concat(actions.reverse)
+
+          if type == :condition
+            begin
+              result = state.next
+              tasks << [:condition, value, state]
+              if Value.truthy?(result)
+                tasks << [:updates, value, filter_stream(update, value, context)]
+                tasks << [:emit, value]
+              end
+            rescue StopIteration
+              nil
+            end
+          elsif type == :updates
+            begin
+              next_value = state.next
+              tasks << [:updates, value, state]
+              tasks << [:visit, next_value]
+            rescue StopIteration
+              nil
+            end
+          end
         end
       end
     end
@@ -1373,7 +1456,7 @@ module Rjq
     def repeat_filter(input, context, args)
       Enumerator.new do |yielder|
         loop do
-          args.fetch(0).eval(input, context).each { |value| yielder << value }
+          filter_stream(args.fetch(0), input, context).each { |value| yielder << value }
         end
       end
     end
@@ -1608,6 +1691,23 @@ module Rjq
       end
     end
 
+    def regexp_matches(input, context, args, string)
+      return matches_for_regexp(input, context, args, string) unless args.length > 1
+
+      matches = []
+      filter_stream(args.fetch(1), input, context).each do |flags|
+        flag_args = [args.fetch(0), AST::Literal.new(flags)]
+        matches.concat(matches_for_regexp(input, context, flag_args, string))
+      end
+      matches
+    end
+
+    def matches_for_regexp(input, context, args, string)
+      regex, flags = regexp(input, context, args)
+      matches = string.to_enum(:scan, regex).map { Regexp.last_match }
+      matches.reject { |match| flags.include?('n') && match[0].empty? }
+    end
+
     def match_builtin(input, context, args)
       string = assert_string(input)
       regex, flags = regexp(input, context, args)
@@ -1716,11 +1816,7 @@ module Rjq
 
     def splits_builtin(input, context, args)
       string = assert_string(input)
-      pattern, = regexp_parts(input, context, args)
-      return [''] + string.each_char.to_a + [''] if pattern.empty?
-
-      regex, = regexp(input, context, args)
-      string.split(regex, -1)
+      split_at_matches(string, regexp_matches(input, context, args, string))
     end
 
     def format_csv(input)
@@ -1823,12 +1919,19 @@ module Rjq
     end
 
     def input_values(input, context, filter)
-      case input
-      when Array
-        input.flat_map { |item| filter.eval(item, context) }
-      else
-        filter.eval(input, context)
+      Enumerator.new do |yielder|
+        iterable_values(input).each do |item|
+          filter_stream(filter, item, context).each { |value| yielder << value }
+        end
       end
+    end
+
+    def iterable_values(input)
+      return input.each if input.is_a?(Array)
+      return input.each_value if input.is_a?(Hash)
+
+      raise TypeError,
+            "Cannot iterate over #{Value.type_of(input)} (#{JSON::Dumper.dump(input, indent: nil)})"
     end
 
     def source_any?(node, input, context, &)
@@ -1863,6 +1966,45 @@ module Rjq
       return filter.stream(input, context) if filter.respond_to?(:stream)
 
       filter.eval(input, context).each
+    end
+
+    def collect_paths(filter, input, context)
+      filter.paths(input, context)
+    rescue Rjq::RuntimeError => e
+      e.take_outputs
+      raise
+    end
+
+    def each_resolved_argument_set(name, args, input, context, &block)
+      indices = (0...args.length).to_a
+      indices.reverse! unless LEFT_OUTER_ARGUMENT_BUILTINS.include?(name)
+      resolve_argument_indices(name, args, indices, input, context, [], &block)
+    end
+
+    def resolve_argument_indices(name, args, indices, input, context, resolved, &block)
+      return yield(resolved) if indices.empty?
+
+      index = indices.first
+      remaining = indices.drop(1)
+      argument = args.fetch(index)
+      if FILTER_ARGUMENT_POSITIONS.fetch(name, []).include?(index)
+        copy = resolved.dup
+        copy[index] = argument
+        return resolve_argument_indices(name, args, remaining, input, context, copy, &block)
+      end
+
+      filter_stream(argument, input, context).each do |value|
+        copy = resolved.dup
+        copy[index] = AST::Literal.new(value)
+        resolve_argument_indices(name, args, remaining, input, context, copy, &block)
+      end
+    end
+
+    def collect_filter(filter, input, context)
+      filter_stream(filter, input, context).to_a
+    rescue Rjq::RuntimeError => e
+      e.take_outputs
+      raise
     end
 
     def ordered_delete_paths(paths)
