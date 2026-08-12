@@ -2,13 +2,31 @@
 
 module Rjq
   class VM
-    def initialize(program, opts = {})
+    class InstructionBudget
+      attr_reader :maximum
+
+      def initialize(maximum)
+        @maximum = maximum
+        @count = 0
+      end
+
+      def charge!
+        return unless @maximum
+
+        @count += 1
+        raise ResourceLimitError, "instruction limit exceeded (#{@maximum})" if @count > @maximum
+      end
+    end
+
+    def initialize(program, opts = {}, instruction_budget: nil)
       @program = program
       @opts = opts
+      @instruction_budget = instruction_budget || InstructionBudget.new(opts[:max_instructions])
     end
 
     def run(input_value)
       Enumerator.new do |yielder|
+        @call_depth = 0
         Value.validate!(input_value)
         @opts.fetch(:variables, {}).each_value { |value| Value.validate!(value) }
         context = context_with_definitions(base_context)
@@ -24,6 +42,8 @@ module Rjq
         rescue ErrorValue => e
           Array(e.outputs).each { |value| yielder << value }
           raise
+        rescue SystemStackError
+          raise ResourceLimitError, 'execution recursion exceeded the host stack limit'
         end
       end
     end
@@ -116,6 +136,7 @@ module Rjq
     end
 
     def execute_stream_instruction(instruction, stack, input, context)
+      charge_instruction!
       case instruction.op
       when :load_input then stack << value_stream(input)
       when :load_const then stack << value_stream(Value.deep_copy(@program.program.constants.fetch(instruction.arg1)))
@@ -147,6 +168,7 @@ module Rjq
       when :binary then stack << binary_stream(instruction.arg1, instruction.arg2, input, context)
       when :assign then stack << assignment_stream(instruction.arg1, input, context)
       when :call then stack << call_stream(instruction, input, context)
+      when :tail_call then stack << call_stream(instruction, input, context, tail: true)
       when :recurse then stack << recurse_stream(input)
       when :scoped_def then stack << each_block(instruction.arg2.instructions, input,
                                                 apply_definition(context, instruction.arg1))
@@ -253,7 +275,11 @@ module Rjq
           value =
             begin
               source.next
-            rescue StopIteration, Rjq::RuntimeError
+            rescue StopIteration
+              break
+            rescue ResourceLimitError
+              raise
+            rescue Rjq::RuntimeError
               break
             end
           yielder << value
@@ -331,6 +357,8 @@ module Rjq
                 end
               end
               break
+            rescue Rjq::ResourceLimitError
+              raise
             rescue Rjq::RuntimeError => e
               if spec[:handler]
                 each_block(spec.fetch(:handler).instructions, e.message, context).each do |item|
@@ -459,7 +487,7 @@ module Rjq
       end
     end
 
-    def call_stream(instruction, input, context)
+    def call_stream(instruction, input, context, tail: false)
       name = instruction.arg1
       arg_blocks = instruction.arg2
 
@@ -468,7 +496,11 @@ module Rjq
       end
 
       if context.functions.key?([name, arg_blocks.length])
-        return user_function_stream(input, context, context.functions.fetch([name, arg_blocks.length]), arg_blocks)
+        definition = context.functions.fetch([name, arg_blocks.length])
+        return value_stream(TailCall.new(input: input, context: context, definition: definition,
+                                         arg_blocks: arg_blocks)) if tail
+
+        return user_function_stream(input, context, definition, arg_blocks)
       end
 
       builtin_args = arg_blocks.map { |block| BytecodeFilter.new(self, block) }
@@ -476,9 +508,45 @@ module Rjq
     end
 
     def user_function_stream(input, context, definition, arg_blocks)
-      flat_map_stream(values_stream(call_contexts(input, context, definition, arg_blocks))) do |ctx|
-        each_block(definition.body.instructions, input, ctx)
+      Enumerator.new do |yielder|
+        with_call_frame do
+          stack = []
+          push_tail_contexts(stack, input, call_contexts(input, context, definition, arg_blocks), definition)
+          until stack.empty?
+            begin
+              value = stack.last.next
+              if value.is_a?(TailCall)
+                contexts = call_contexts(value.input, value.context, value.definition, value.arg_blocks)
+                push_tail_contexts(stack, value.input, contexts, value.definition)
+              else
+                yielder << value
+              end
+            rescue StopIteration
+              stack.pop
+            end
+          end
+        end
       end
+    end
+
+    def push_tail_contexts(stack, input, contexts, definition)
+      contexts.reverse_each do |ctx|
+        stack << each_block(definition.body.instructions, input, ctx).to_enum
+      end
+    end
+
+    def with_call_frame
+      @call_depth += 1
+      max_depth = @opts.fetch(:max_call_depth, Runtime::DEFAULT_OPTIONS.fetch(:max_call_depth))
+      raise ResourceLimitError, "call depth limit exceeded (#{max_depth})" if max_depth && @call_depth > max_depth
+
+      yield
+    ensure
+      @call_depth -= 1
+    end
+
+    def charge_instruction!
+      @instruction_budget.charge!
     end
 
     def recurse_stream(input)
@@ -508,6 +576,8 @@ module Rjq
 
     def execute_optional(block, input, context)
       execute_filter(block, input, context)
+    rescue ResourceLimitError
+      raise
     rescue Rjq::RuntimeError
       []
     end
@@ -573,6 +643,8 @@ module Rjq
 
     def execute_try(spec, input, context)
       execute_filter(spec.fetch(:body), input, context)
+    rescue Rjq::ResourceLimitError
+      raise
     rescue Rjq::ErrorValue => e
       Array(e.outputs) + (spec[:handler] ? execute_filter(spec.fetch(:handler), e.value, context) : [])
     rescue Rjq::RuntimeError => e
@@ -795,11 +867,22 @@ module Rjq
             end
           end
         else
-          filter = BytecodeFilter.new(self, block, captured_context: context)
+          filter = forwarded_filter(block, context) || BytecodeFilter.new(self, block, captured_context: context)
           contexts = contexts.map { |ctx| ctx.with_variable(filter_variable_name(param), filter) }
         end
       end
       contexts
+    end
+
+    def forwarded_filter(block, context)
+      return unless block.instructions.length == 1
+
+      instruction = block.instructions.first
+      return unless %i[call tail_call].include?(instruction.op) && instruction.arg2.empty?
+
+      context.variables[filter_variable_name(instruction.arg1)].then do |filter|
+        filter if filter.is_a?(BytecodeFilter)
+      end
     end
 
     def evaluate_variable(name, context, loc = nil)
@@ -856,6 +939,7 @@ module Rjq
     end
 
     def execute_path_instruction(instruction, stack, input, context)
+      charge_instruction!
       case instruction.op
       when :load_input then stack << [[]]
       when :field then stack << stack.pop.map { |path| path + [instruction.arg1] }
@@ -871,7 +955,7 @@ module Rjq
       when :binding then stack << binding_paths(instruction.arg1, input, context)
       when :branch then stack << branch_paths(instruction, input, context)
       when :optional then stack << optional_paths(instruction.arg1, input, context)
-      when :call then stack << call_paths(instruction, input, context)
+      when :call, :tail_call then stack << call_paths(instruction, input, context)
       when :recurse then stack << Path.paths(input, leaves_only: false)
       when :scoped_def then stack << paths_for_block(instruction.arg2.instructions, input,
                                                      apply_definition(context, instruction.arg1))
@@ -938,6 +1022,8 @@ module Rjq
 
     def optional_paths(block, input, context)
       paths_for_block(block.instructions, input, context)
+    rescue Rjq::ResourceLimitError
+      raise
     rescue Rjq::RuntimeError
       []
     end
@@ -965,8 +1051,10 @@ module Rjq
 
       if context.functions.key?([name, arg_blocks.length])
         definition = context.functions.fetch([name, arg_blocks.length])
-        return call_contexts(input, context, definition, arg_blocks).flat_map do |ctx|
-          paths_for_block(definition.body.instructions, input, ctx)
+        return with_call_frame do
+          call_contexts(input, context, definition, arg_blocks).flat_map do |ctx|
+            paths_for_block(definition.body.instructions, input, ctx)
+          end
         end
       end
 

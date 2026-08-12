@@ -58,6 +58,9 @@ Rjq.run_stream(".", io: input_io, opts: {
   input_max_depth: 128,
   max_number_digits: 1_000,
   max_string_bytes: 1_048_576,
+  max_filter_depth: 128,
+  max_call_depth: 64,
+  max_instructions: 1_000_000,
   max_outputs: 10_000,
   regexp_timeout: 0.1
 }).to_a
@@ -69,6 +72,12 @@ Rjq.run_stream(".", io: input_io, opts: {
 processing. Passing `nil` for `stderr` or `module_resolver` selects the normal process stderr or default module
 resolver, respectively. Option hashes and their `variables` and `library_path` containers are copied before lazy
 execution begins.
+
+Filter nesting defaults to 256. User-function calls in continuation-free tail positions are trampolined, so bounded
+countdown-style recursion does not consume the Ruby stack. `max_call_depth` and `max_instructions` are unlimited by default; the latter counts
+bytecode instructions actually demanded by the consumer. Call and instruction limits are host safety boundaries and
+cannot be caught by jq `try` or `?`. The same three controls are available to the CLI as
+`--max-filter-depth`, `--max-call-depth`, and `--max-instructions`.
 
 Inspect compiled bytecode:
 

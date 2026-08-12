@@ -37,6 +37,9 @@ module Rjq
             --stream-errors       implies --stream and report parse error as
                                   an array;
             --seq                 parse input/output as application/json-seq;
+            --max-filter-depth n  reject filters nested deeper than n;
+            --max-call-depth n    bound non-tail user-function calls;
+            --max-instructions n  bound executed bytecode instructions;
         -f, --from-file file      load filter from the file;
         -L directory              search modules from the directory;
             --arg name value      set $name to the string value;
@@ -186,6 +189,12 @@ module Rjq
       when '--color-output' then @opts[:color] = true
       when '--monochrome-output' then @opts[:color] = false
       when '--allow-comments' then @opts[:allow_comments] = true
+      when '--max-filter-depth'
+        @opts[:max_filter_depth] = validate_limit(next_arg('--max-filter-depth'), '--max-filter-depth', minimum: 1)
+      when '--max-call-depth'
+        @opts[:max_call_depth] = validate_limit(next_arg('--max-call-depth'), '--max-call-depth', minimum: 1)
+      when '--max-instructions'
+        @opts[:max_instructions] = validate_limit(next_arg('--max-instructions'), '--max-instructions', minimum: 0)
       when '--indent'
         @opts[:indent] = validate_indent(next_arg('--indent', '--indent takes one parameter'))
         @opts[:tab] = false
@@ -294,6 +303,15 @@ module Rjq
       indent
     rescue ArgumentError
       raise OptionError, 'rjq: --indent must be an integer'
+    end
+
+    def validate_limit(value, option, minimum:)
+      limit = Integer(value, 10)
+      raise OptionError, "rjq: #{option} must be at least #{minimum}" if limit < minimum
+
+      limit
+    rescue ArgumentError
+      raise OptionError, "rjq: #{option} must be an integer"
     end
 
     def input_streams

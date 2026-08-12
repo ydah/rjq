@@ -9,6 +9,10 @@ module Rjq
 
   class RuntimeError < Error; end
 
+  # Execution budgets are process-safety boundaries and cannot be caught by
+  # jq filters such as `try` or `?`.
+  class ResourceLimitError < RuntimeError; end
+
   class TypeError < RuntimeError; end
 
   class InvalidPathError < TypeError

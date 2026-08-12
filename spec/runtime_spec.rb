@@ -243,8 +243,15 @@ RSpec.describe Rjq do
       .to raise_error(ArgumentError, /input_max_depth must be an Integer/)
     expect { described_class.run('.', nil, regexp_timeout: Float::NAN) }
       .to raise_error(ArgumentError, /regexp_timeout must be a finite positive number or nil/)
+    expect { described_class.run('.', nil, max_call_depth: 0) }
+      .to raise_error(ArgumentError, /max_call_depth must be an Integer at least 1/)
+    expect { described_class.run('.', nil, max_call_depth: nil) }.not_to raise_error
+    expect { described_class.run('.', nil, max_instructions: -1) }
+      .to raise_error(ArgumentError, /max_instructions must be an Integer at least 0/)
     expect { described_class.run('.', nil, variables: []) }
       .to raise_error(ArgumentError, /variables must be a Hash/)
+    expect { described_class.run('.', nil, instruction_budget: Object.new) }
+      .to raise_error(ArgumentError, /unknown runtime option: :instruction_budget/)
 
     expect { Rjq::Compiler.new(compact: true) }
       .to raise_error(ArgumentError, /unknown compiler option: :compact/)
@@ -279,6 +286,47 @@ RSpec.describe Rjq do
     unsafe_parentheses = ('(' * 5000) + '.' + (')' * 5000)
     expect { described_class.compile(unsafe_parentheses, max_filter_depth: 100_000) }
       .to raise_error(Rjq::CompileError, /filter nesting exceeds safe parser\/compiler depth/)
+  end
+
+  it 'trampolines tail-recursive user functions while bounding non-tail calls' do
+    tail_recursive = 'def count: if . > 0 then . - 1 | count else . end; 5000 | count'
+    branching = 'def walk: if . > 0 then (. - 1, . - 2) | walk else . end; 3 | walk'
+    non_tail = 'def count: if . > 0 then (. - 1 | count) + 1 else . end; 500 | count'
+    compiled = described_class.compile(tail_recursive)
+
+    expect(compiled.run(nil).to_a).to eq([0.0])
+    expect(compiled.run(nil).to_a).to eq([0.0])
+    expect(described_class.run(branching, nil).to_a).to eq([0.0, -1.0, 0.0, 0.0, -1.0])
+    forwarded_filter = 'def count(g): if . > 0 then . - 1 | count(g) else g end; 5000 | count((., . + 10))'
+    expect(described_class.run(forwarded_filter, nil).to_a).to eq([0.0, 10.0])
+    path_recursion = 'def descend: if length > 0 then .[0] | descend else . end; ' \
+                     'reduce range(0;200) as $i ([]; [.]) | descend = 1 | 1'
+    expect(described_class.run(path_recursion, nil).to_a).to eq([1])
+    expect { described_class.run(non_tail, nil, max_call_depth: 32).to_a }
+      .to raise_error(Rjq::ResourceLimitError, 'call depth limit exceeded (32)')
+    expect { described_class.run("try (#{non_tail}) catch .", nil, max_call_depth: 32).to_a }
+      .to raise_error(Rjq::ResourceLimitError, 'call depth limit exceeded (32)')
+  end
+
+  it 'counts only bytecode instructions demanded by the consumer' do
+    compiled = described_class.compile('1, 2')
+
+    expect(compiled.run(nil, max_instructions: 2).next).to eq(1)
+    expect { compiled.run(nil, max_instructions: 2).to_a }
+      .to raise_error(Rjq::ResourceLimitError, 'instruction limit exceeded (2)')
+    expect { described_class.run('try (1, 2) catch .', nil, max_instructions: 1).to_a }
+      .to raise_error(Rjq::ResourceLimitError, 'instruction limit exceeded (1)')
+    expect(compiled.run(nil, max_instructions: 3).to_a).to eq([1, 2])
+    expect(compiled.run(nil, max_instructions: 3).to_a).to eq([1, 2])
+
+    stream = StringIO.new("1\n2\n")
+    expect { described_class.run_stream('.', io: stream, opts: { max_instructions: 1 }).to_a }
+      .to raise_error(Rjq::ResourceLimitError, 'instruction limit exceeded (1)')
+    forged = Rjq::VM::InstructionBudget.new(nil)
+    expect { compiled.run(nil, max_instructions: 0, instruction_budget: forged).to_a }
+      .to raise_error(ArgumentError, /unknown runtime option: :instruction_budget/)
+    expect { compiled.run_with_instruction_budget(nil, { max_instructions: 0 }, forged).to_a }
+      .to raise_error(ArgumentError, /instruction budget must match max_instructions/)
   end
 
   it 'does not let try or optional catch halt signals' do

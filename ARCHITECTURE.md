@@ -31,4 +31,7 @@ JSON parsing uses jq's 256-container depth limit. Module bytes and dependency de
 set `max_outputs` and `input_chunk_size`; `input_max_depth` can lower the parser depth limit. `max_number_digits` and
 `max_string_bytes` are optional, unlimited by default, and stop oversized tokens incrementally before numeric
 conversion or decoded-string growth. Public runtime and compiler APIs reject unknown options and invalid limits at
-construction. Cyclic Ruby values and invalid JSON value types are rejected before copying or output.
+construction. Filter parsing is capped at 256 nested expressions by default. Continuation-free user calls in tail position use an
+explicit VM trampoline; non-tail calls can be bounded with `max_call_depth`. An optional bytecode-instruction budget is
+charged lazily, and execution limits bypass jq-level error handlers so filters cannot disable host safety policy.
+Cyclic Ruby values and invalid JSON value types are rejected before copying or output.

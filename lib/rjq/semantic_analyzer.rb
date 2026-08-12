@@ -4,7 +4,7 @@ module Rjq
   class SemanticAnalyzer
     PUSH_OPS = %i[
       load_input load_const string_interp format variable path optional binding array object branch try reduce foreach
-      label unary binary assign call recurse scoped_def
+      label unary binary assign call tail_call recurse scoped_def
     ].freeze
     TRANSFORM_OPS = %i[
       field index_const index_filter slice_const slice_filter each pipe append
@@ -32,7 +32,7 @@ module Rjq
     def validate_instructions(instructions, functions, filter_parameters)
       validate_stack(instructions)
       instructions.each do |instruction|
-        if instruction.op == :call
+        if %i[call tail_call].include?(instruction.op)
           validate_call(instruction, functions, filter_parameters)
         elsif instruction.op == :scoped_def
           validate_scoped_definition(instruction, functions, filter_parameters)

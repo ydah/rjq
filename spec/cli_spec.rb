@@ -17,6 +17,37 @@ RSpec.describe Rjq::CLI do
     expect(err.string).not_to include('SystemStackError', 'lib/rjq/')
   end
 
+  it 'reports call and instruction resource limits as controlled runtime errors' do
+    non_tail = 'def count: if . > 0 then (. - 1 | count) + 1 else . end; 100 | count'
+    out = StringIO.new
+    err = StringIO.new
+
+    code = described_class.new(['-nc', '--max-call-depth', '16', non_tail], stdin: StringIO.new,
+                                                                         stdout: out, stderr: err).run
+
+    expect(code).to eq(5)
+    expect(out.string).to eq('')
+    expect(err.string).to include('call depth limit exceeded (16)')
+    expect(err.string).not_to include('SystemStackError', 'lib/rjq/')
+
+    out = StringIO.new
+    err = StringIO.new
+    code = described_class.new(['-nc', '--max-instructions', '2', '1, 2'], stdin: StringIO.new,
+                                                                          stdout: out, stderr: err).run
+    expect(code).to eq(5)
+    expect(out.string).to eq("1\n")
+    expect(err.string).to include('instruction limit exceeded (2)')
+  end
+
+  it 'validates resource limit command-line options' do
+    err = StringIO.new
+    code = described_class.new(['--max-instructions', '-1', '.'], stdin: StringIO.new,
+                                                                  stdout: StringIO.new, stderr: err).run
+
+    expect(code).to eq(2)
+    expect(err.string).to include('--max-instructions must be at least 0')
+  end
+
   it 'reports locations from filter files' do
     Dir.mktmpdir do |dir|
       filter_path = File.join(dir, 'location.jq')

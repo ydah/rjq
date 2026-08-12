@@ -6,7 +6,8 @@ module Rjq
       compact: false, raw_output: false, raw_output0: false, join_output: false,
       null_input: false, raw_input: false, slurp: false, ascii: false,
       sort_keys: false, tab: false, indent: 2, seq: false, stream: false,
-      stream_errors: false, unbuffered: false, max_outputs: nil, variables: {}
+      stream_errors: false, unbuffered: false, max_call_depth: nil, max_instructions: nil,
+      max_outputs: nil, variables: {}
     }.freeze
     OPTION_KEYS = (DEFAULT_OPTIONS.keys + %i[
       allow_comments color current_filename current_line exit_status input_chunk_size input_max_depth input_queue
@@ -30,6 +31,8 @@ module Rjq
         validate_integer!(opts, :indent, minimum: 0, maximum: 7)
         validate_integer!(opts, :input_chunk_size, minimum: 1)
         validate_integer!(opts, :input_max_depth, minimum: 0)
+        validate_integer!(opts, :max_call_depth, minimum: 1, optional: true)
+        validate_integer!(opts, :max_instructions, minimum: 0, optional: true)
         validate_integer!(opts, :current_line, minimum: 1, optional: true)
         validate_integer!(opts, :max_number_digits, minimum: 0, optional: true)
         validate_integer!(opts, :max_outputs, minimum: 0, optional: true)
@@ -100,6 +103,7 @@ module Rjq
 
         raise ArgumentError, 'variables must be a Hash'
       end
+
     end
 
     InputRecord = Struct.new(:value, :filename, :line, keyword_init: true)
@@ -239,6 +243,7 @@ module Rjq
     def run_queue(queue, builtin_queue = queue, on_close: nil)
       ResultStream.new(on_close: on_close) do |emit|
         output_count = 0
+        instruction_budget = VM::InstructionBudget.new(@opts[:max_instructions])
         until queue.empty?
           record = queue.shift_record
           run_opts = @opts.merge(
@@ -246,7 +251,7 @@ module Rjq
             remaining_inputs: builtin_queue, current_filename: display_filename(record.filename),
             current_line: record.line
           )
-          @program.run(record.value, run_opts).each do |result|
+          @program.run_with_instruction_budget(record.value, run_opts, instruction_budget).each do |result|
             output_count += 1
             max_outputs = @opts[:max_outputs]
             raise RuntimeError, "output limit exceeded (#{max_outputs})" if max_outputs && output_count > max_outputs

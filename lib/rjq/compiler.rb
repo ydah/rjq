@@ -18,6 +18,15 @@ module Rjq
       VM.new(self, Runtime.normalize_options(opts)).run(input_value)
     end
 
+    def run_with_instruction_budget(input_value, opts, budget)
+      normalized = Runtime.normalize_options(opts)
+      unless budget.is_a?(VM::InstructionBudget) && budget.maximum == normalized[:max_instructions]
+        raise ArgumentError, 'instruction budget must match max_instructions'
+      end
+
+      VM.new(self, normalized, instruction_budget: budget).run(input_value)
+    end
+
     def disasm
       program.disasm
     end
@@ -209,11 +218,33 @@ module Rjq
     end
 
     def compile_definition(definition)
-      BytecodeFunctionDefinition.new(
+      compiled = BytecodeFunctionDefinition.new(
         name: definition.name,
         params: definition.params,
         body: block_for(definition.body)
       )
+      mark_tail_calls(compiled.body)
+      compiled
+    end
+
+    def mark_tail_calls(block)
+      instruction = block.instructions.last
+      return unless instruction
+
+      case instruction.op
+      when :call
+        instruction.op = :tail_call
+      when :pipe
+        mark_tail_calls(instruction.arg1)
+      when :branch
+        instruction.arg2.each { |branch| mark_tail_calls(branch) }
+      when :binding
+        mark_tail_calls(instruction.arg1.fetch(:body))
+      when :append
+        mark_tail_calls(instruction.arg1)
+      when :scoped_def
+        mark_tail_calls(instruction.arg2)
+      end
     end
 
     def compile_object_pairs(pairs)

@@ -93,6 +93,17 @@ RSpec.describe Rjq::VM do
     expect(Rjq.compile('def f(g): g; f(1, error)').run(nil).next).to eq(1)
   end
 
+  it 'marks only structurally tail-positioned function calls for trampolining' do
+    compiled = Rjq.compile('def f: if . then (. | f) else (f + 1) end; f')
+    definition = compiled.program.definitions.first
+    branch = definition.body.instructions.first
+    then_call = branch.arg2.first.instructions.last.arg1.instructions.last
+    else_call = branch.arg2.last.instructions.first.arg2.first.instructions.first
+
+    expect(then_call.op).to eq(:tail_call)
+    expect(else_call.op).to eq(:call)
+  end
+
   it 'deduplicates constants and freezes executable bytecode' do
     compiled = Rjq.compile('["same", "same"]')
 

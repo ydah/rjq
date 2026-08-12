@@ -5,7 +5,7 @@ module Rjq
     ALL = %i[
       load_input load_const string_interp format variable field index_const index_filter slice_const slice_filter
       each path optional pipe append binding array object branch try reduce foreach label break unary binary assign
-      call recurse scoped_def
+      call tail_call recurse scoped_def
     ].freeze
 
     MNEMONICS = ALL.to_h { |opcode| [opcode, opcode.to_s] }.freeze
@@ -38,6 +38,8 @@ module Rjq
   end
 
   BytecodeBlock = Struct.new(:instructions, keyword_init: true)
+
+  TailCall = Struct.new(:input, :context, :definition, :arg_blocks, keyword_init: true)
 
   BytecodeFunctionDefinition = Struct.new(:name, :params, :body, :closure, keyword_init: true) do
     def with_closure(functions)
