@@ -30,6 +30,8 @@ module DifferentialCompat
     Case.new(name: 'reduce branches', filter: 'reduce [1,2][] as $x (0,10; . + $x)', input: '', flags: ['-n']),
     Case.new(name: 'foreach branches', filter: 'foreach [1,2][] as $x (0,10; . + $x; .)', input: '', flags: ['-n']),
     Case.new(name: 'lazy range', filter: 'first(range(0; 1000000000000))', input: '', flags: ['-n']),
+    Case.new(name: 'lazy nth', filter: 'nth(0; (1, error("not reached")))', input: '', flags: ['-n']),
+    Case.new(name: 'lazy recurse children', filter: 'limit(2; recurse(1, error("not reached")))', input: '', flags: ['-n']),
     Case.new(name: 'repeat semantics', filter: 'limit(5; repeat(. + 1))', input: '', flags: ['-n']),
     Case.new(name: 'branching while', filter: 'while(. < 3; . + 1, . + 2)', input: '', flags: ['-n']),
     Case.new(name: 'branching until', filter: 'until(. >= 3; . + 1, . + 2)', input: '', flags: ['-n']),

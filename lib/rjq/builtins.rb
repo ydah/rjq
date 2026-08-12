@@ -771,25 +771,31 @@ module Rjq
 
     def recurse(input, context, args)
       Enumerator.new do |yielder|
-        stack = [input]
+        stack = [[input].each]
         until stack.empty?
-          value = stack.pop
+          begin
+            value = stack.last.next
+          rescue StopIteration
+            stack.pop
+            next
+          end
           yielder << value
           children = if args.empty?
                        case value
-                       when Array then value
-                       when Hash then value.values
-                       else []
+                       when Array then value.each
+                       when Hash then value.each_value
+                       else [].each
                        end
                      else
-                       args.first.eval(value, context)
+                       filter_stream(args.first, value, context)
                      end
           if args.length > 1
-            children = children.select do |child|
-              args[1].eval(child, context).any? { |result| Value.truthy?(result) }
+            condition = args[1]
+            children = children.lazy.select do |child|
+              filter_stream(condition, child, context).any? { |result| Value.truthy?(result) }
             end
           end
-          stack.concat(children.reverse)
+          stack << children.each
         end
       end
     end
@@ -1133,8 +1139,13 @@ module Rjq
         index = numeric(raw_index).ceil
         raise RuntimeError, "nth doesn't support negative indices" if index.negative?
 
-        values = args.length > 1 ? args[1].eval(input, context) : assert_array(input)
-        index >= values.length ? [] : [values[index]]
+        if args.length > 1
+          values = args[1].take(input, context, index + 1)
+          index >= values.length ? [] : [values[index]]
+        else
+          values = assert_array(input)
+          index >= values.length ? [] : [values[index]]
+        end
       end
     end
 
@@ -1533,6 +1544,12 @@ module Rjq
       raise RuntimeError, "missing argument #{index}" unless args[index]
 
       args[index].eval(input, context).first
+    end
+
+    def filter_stream(filter, input, context)
+      return filter.stream(input, context) if filter.respond_to?(:stream)
+
+      filter.eval(input, context).each
     end
 
     def ordered_delete_paths(paths)

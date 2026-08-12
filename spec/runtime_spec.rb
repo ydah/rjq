@@ -19,6 +19,8 @@ RSpec.describe Rjq do
 
   it 'keeps generators lazy and removes fixed iteration cutoffs' do
     expect(described_class.run('first(range(0; 1000000000000))', nil).to_a).to eq([0])
+    expect(described_class.run('nth(0; (1, error("not reached")))', nil).to_a).to eq([1])
+    expect(described_class.run('limit(2; recurse(1, error("not reached")))', nil).to_a).to eq([nil, 1])
     expect(described_class.run('limit(5; repeat(. + 1))', nil).to_a).to eq([1, 1, 1, 1, 1])
     expect(described_class.run('while(. < 3; . + 1, . + 2)', nil).to_a).to eq([nil, 1, 2, 2])
     expect(described_class.run('until(. >= 3; . + 1, . + 2)', nil).to_a).to eq([3, 4, 3, 3, 4])
