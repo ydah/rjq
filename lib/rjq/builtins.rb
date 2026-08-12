@@ -1236,6 +1236,8 @@ module Rjq
 
       needle = [needle] unless needle.is_a?(Array)
       max = input.length - assert_array(needle).length
+      return nil if needle.empty?
+
       (0..max).find { |index| array_slice_equal?(input, needle, index) }
     end
 
@@ -1251,6 +1253,8 @@ module Rjq
 
       needle = [needle] unless needle.is_a?(Array)
       max = input.length - assert_array(needle).length
+      return nil if needle.empty?
+
       max.downto(0).find { |index| array_slice_equal?(input, needle, index) }
     end
 
@@ -1270,6 +1274,8 @@ module Rjq
       return unsupported_search_result(input, needle) unless input.is_a?(Array)
 
       needle = [needle] unless needle.is_a?(Array)
+      return [] if needle.empty?
+
       max = input.length - needle.length
       (0..max).select { |index| array_slice_equal?(input, needle, index) }
     end
@@ -1305,7 +1311,7 @@ module Rjq
         count = numeric(eval_arg(args, 0, input, context)).ceil
         return [[]] if count.negative?
 
-        arrays = Array.new(count) { assert_array(input) }
+        arrays = Array.new(count) { combination_array(input) }
       else
         source = args.empty? ? assert_array(input) : eval_arg(args, 0, input, context)
         arrays = assert_array(source)
@@ -1320,6 +1326,13 @@ module Rjq
       rows = assert_array(input).map { |row| assert_array(row) }
       max = rows.map(&:length).max || 0
       (0...max).map { |index| rows.map { |row| row[index] } }
+    end
+
+    def combination_array(value)
+      return value if value.is_a?(Array)
+
+      raise TypeError,
+            "Cannot iterate over #{Value.type_of(value)} (#{JSON::Dumper.dump(value, indent: nil)})"
     end
 
     def bsearch(input, context, args)

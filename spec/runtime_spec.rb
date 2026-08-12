@@ -1166,6 +1166,8 @@ RSpec.describe Rjq do
       expect { described_class.run("#{name}(1)", 1).to_a }
         .to raise_error(Rjq::TypeError, 'Cannot index number with number')
     end
+    expect(described_class.run('[index([]),rindex([]),indices([])]', [0, 1]).to_a)
+      .to eq([[nil, nil, []]])
   end
 
   it 'preserves jq-defined builtin argument order and input effects' do
@@ -1217,6 +1219,8 @@ RSpec.describe Rjq do
       .to eq([[[0, 1, 2], [2]]])
     expect(described_class.run('[combinations(0.1), combinations(1.9), combinations(-0.1)]', [1, 2]).to_a)
       .to eq([[[1], [2], [1, 1], [1, 2], [2, 1], [2, 2], []]])
+    expect { described_class.run('combinations(1.9)', 1).to_a }
+      .to raise_error(Rjq::TypeError, 'Cannot iterate over number (1)')
 
     deep = 20_000.times.reduce(1) { |value, _| [value] }
     expect(described_class.run('flatten', deep).to_a).to eq([[1]])
