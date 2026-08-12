@@ -167,10 +167,15 @@ module Rjq
       depth = 1
       quote = nil
       escape = false
+      comment = false
       start = @index
 
       until eof?
         char = advance
+        if comment
+          comment = false if char == "\n"
+          next
+        end
         if quote
           if escape
             escape = false
@@ -183,6 +188,8 @@ module Rjq
         end
 
         case char
+        when '#'
+          comment = true if @allow_comments
         when '"', "'"
           quote = char
         when '('

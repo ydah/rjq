@@ -18,6 +18,13 @@ RSpec.describe Rjq::Lexer do
                                         start_offset: 6)
   end
 
+  it 'ignores interpolation delimiters and quotes inside comments' do
+    source = %Q{"x\\(1 # ) ( \"\n)"}
+    fragment = described_class.new(source).tokenize.first.value.last.last
+
+    expect(fragment.source).to eq("1 # ) ( \"\n")
+  end
+
   it 'tokenizes negative zero as unary minus and a number literal' do
     tokens = described_class.new('-0').tokenize
 

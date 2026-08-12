@@ -26,9 +26,36 @@ RSpec.describe Rjq do
 
     expect(described_class.run(normal, nil, source_path: '/tmp/filter.jq').to_a).to eq([expected])
     expect(described_class.run(formatted, nil, source_path: '/tmp/filter.jq').to_a).to eq([expected])
-    expect(described_class.run('"x\\(1 # comment\n)"', nil).to_a).to eq(['x1'])
-    expect { described_class.compile('"x\\(1 # comment\n)"', allow_comments: false) }
-      .to raise_error(Rjq::ParseError, /comments are disabled/)
+    expect(described_class.run(%Q{"x\\(1 # comment\n)"}, nil).to_a).to eq(['x1'])
+    expect { described_class.compile(%Q{"x\\(1 # comment\n)"}, allow_comments: false) }
+      .to raise_error(Rjq::ParseError)
+  end
+
+  it 'ignores interpolation boundaries inside comments but preserves hashes in strings' do
+    filters = [
+      %Q{"x\\(1 # )\n)"},
+      %Q{"x\\(1 # (\n)"},
+      %Q{"x\\(1 # \"\n)"},
+      %q{"x\("#)" | length)"},
+      %Q{@json "x\\(1 # )\n)"}
+    ]
+
+    expect(filters.map { |filter| described_class.run(filter, nil).to_a }).to eq([
+      ['x1'], ['x1'], ['x1'], ['x2'], ['x1']
+    ])
+    expect { described_class.compile(%Q{"x\\(1 # )\n)"}, allow_comments: false) }
+      .to raise_error(Rjq::ParseError)
+  end
+
+  it 'uses comment-aware interpolation boundaries in modules' do
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, 'commented.jq'), %Q{def value: "x\\(1 # ) ( \"\n)";\n})
+
+      expect(described_class.run('include "commented"; value', nil, library_path: [dir]).to_a).to eq(['x1'])
+      expect do
+        described_class.compile('include "commented"; value', library_path: [dir], allow_comments: false)
+      end.to raise_error(Rjq::ParseError)
+    end
   end
 
   it 'preserves module locations through definitions and interpolation' do
