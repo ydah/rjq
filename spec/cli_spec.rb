@@ -4,6 +4,19 @@ require 'spec_helper'
 require 'tmpdir'
 
 RSpec.describe Rjq::CLI do
+  it 'reports excessive filter nesting as a compile error without a Ruby backtrace' do
+    filter = ('(' * 300) + '.' + (')' * 300)
+    out = StringIO.new
+    err = StringIO.new
+
+    code = described_class.new(['-n', filter], stdin: StringIO.new, stdout: out, stderr: err).run
+
+    expect(code).to eq(3)
+    expect(out.string).to eq('')
+    expect(err.string).to include('filter nesting exceeds 256')
+    expect(err.string).not_to include('SystemStackError', 'lib/rjq/')
+  end
+
   it 'reports locations from filter files' do
     Dir.mktmpdir do |dir|
       filter_path = File.join(dir, 'location.jq')

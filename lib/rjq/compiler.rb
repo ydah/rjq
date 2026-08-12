@@ -24,11 +24,12 @@ module Rjq
   end
 
   class BytecodeCompiler
-    def initialize(allow_comments: true)
+    def initialize(allow_comments: true, max_filter_depth: Parser::DEFAULT_MAX_FILTER_DEPTH)
       @constants = []
       @constant_indices = {}
       @current_nodes = []
       @allow_comments = allow_comments
+      @max_filter_depth = max_filter_depth
     end
 
     def compile(ast, module_metadata: {}, module_variables: {})
@@ -141,7 +142,8 @@ module Rjq
       )
       parsed = Parser.new(fragment.source, allow_comments: @allow_comments, source_name: fragment.filename,
                                           initial_line: fragment.line, initial_column: fragment.column,
-                                          start_offset: fragment.start_offset).parse
+                                          start_offset: fragment.start_offset,
+                                          max_filter_depth: @max_filter_depth).parse
       { kind: :expr, block: block_for(parsed.body), definitions: parsed.definitions.map do |definition|
         compile_definition(definition)
       end }
@@ -257,7 +259,7 @@ module Rjq
   end
 
   class Compiler
-    OPTION_KEYS = %i[allow_comments library_path module_resolver source_path].freeze
+    OPTION_KEYS = %i[allow_comments library_path max_filter_depth module_resolver source_path].freeze
 
     class << self
       def options_from(opts)
@@ -272,6 +274,7 @@ module Rjq
 
         validate_boolean!(opts, :allow_comments)
         validate_optional_string!(opts, :source_path)
+        validate_positive_integer!(opts, :max_filter_depth)
         validate_library_path!(opts[:library_path]) if opts.key?(:library_path)
         validate_module_resolver!(opts[:module_resolver]) if opts.key?(:module_resolver)
         opts
@@ -300,6 +303,13 @@ module Rjq
         raise ArgumentError, "#{key} must be a String or nil"
       end
 
+      def validate_positive_integer!(opts, key)
+        return unless opts.key?(key)
+        return if opts[key].is_a?(Integer) && opts[key].positive?
+
+        raise ArgumentError, "#{key} must be a positive Integer"
+      end
+
       def validate_library_path!(paths)
         return if paths.is_a?(Array) && paths.all? { |path| path.is_a?(String) }
 
@@ -319,14 +329,17 @@ module Rjq
     end
 
     def compile(filter_string)
+      max_filter_depth = @opts.fetch(:max_filter_depth, Parser::DEFAULT_MAX_FILTER_DEPTH)
       source_path = @opts[:source_path] || '<top-level>'
       parsed = Parser.new(filter_string, allow_comments: @opts.fetch(:allow_comments, true),
-                                         source_name: source_path).parse
+                                         source_name: source_path, max_filter_depth: max_filter_depth).parse
       resolver = @opts[:module_resolver] || default_module_resolver
       allow_comments = @opts.fetch(:allow_comments, true)
-      loaded = ModuleLoader.new(resolver, allow_comments: allow_comments).load(parsed, source_path: @opts[:source_path])
+      loaded = ModuleLoader.new(resolver, allow_comments: allow_comments,
+                                          max_filter_depth: max_filter_depth).load(parsed,
+                                                                                   source_path: @opts[:source_path])
       ast = loaded.program
-      program = BytecodeCompiler.new(allow_comments: allow_comments).compile(
+      program = BytecodeCompiler.new(allow_comments: allow_comments, max_filter_depth: max_filter_depth).compile(
         ast,
         module_metadata: loaded.metadata,
         module_variables: loaded.variables
@@ -334,6 +347,8 @@ module Rjq
       SemanticAnalyzer.new(program).validate!
       program.finalize!
       CompiledProgram.new(ast, program: program)
+    rescue SystemStackError
+      raise CompileError, "filter nesting exceeds safe parser/compiler depth in #{source_path}"
     end
 
     private

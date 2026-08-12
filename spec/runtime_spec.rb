@@ -252,6 +252,8 @@ RSpec.describe Rjq do
       .to raise_error(ArgumentError, /allow_comments must be true or false/)
     expect { described_class.compile('.', library_path: ['ok', 1]) }
       .to raise_error(ArgumentError, /library_path must be an Array of Strings/)
+    expect { described_class.compile('.', max_filter_depth: 0) }
+      .to raise_error(ArgumentError, /max_filter_depth must be a positive Integer/)
 
     program = described_class.compile('$x')
     expect { program.run(nil, typo_option: true) }
@@ -261,6 +263,22 @@ RSpec.describe Rjq do
     variables['x'] = 2
     expect(output.to_a).to eq([1])
     expect { described_class.compile('.', module_resolver: nil) }.not_to raise_error
+  end
+
+  it 'rejects excessive filter nesting as a controlled compile error' do
+    parentheses = ('(' * 80) + '.' + (')' * 80)
+    conditionals = ('if true then ' * 80) + '.' + (' else . end' * 80)
+    scoped_functions = '(' + ('def f: .; ' * 80) + '.)'
+    module_metadata = 'module {"x":' + ('[' * 80) + '0' + (']' * 80) + '}; .'
+
+    [parentheses, conditionals, scoped_functions, module_metadata].each do |filter|
+      expect { described_class.compile(filter, max_filter_depth: 32) }
+        .to raise_error(Rjq::ParseError, /filter nesting exceeds 32/)
+    end
+
+    unsafe_parentheses = ('(' * 5000) + '.' + (')' * 5000)
+    expect { described_class.compile(unsafe_parentheses, max_filter_depth: 100_000) }
+      .to raise_error(Rjq::CompileError, /filter nesting exceeds safe parser\/compiler depth/)
   end
 
   it 'does not let try or optional catch halt signals' do

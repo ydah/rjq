@@ -10,8 +10,8 @@ module Rjq
     }.freeze
     OPTION_KEYS = (DEFAULT_OPTIONS.keys + %i[
       allow_comments color current_filename current_line exit_status input_chunk_size input_max_depth input_queue
-      jq_origin library_path max_number_digits max_string_bytes module_resolver regexp_timeout remaining_inputs
-      source_path stderr
+      jq_origin library_path max_filter_depth max_number_digits max_string_bytes module_resolver regexp_timeout
+      remaining_inputs source_path stderr
     ]).freeze
     BOOLEAN_OPTIONS = %i[
       allow_comments ascii compact exit_status join_output null_input raw_input raw_output raw_output0 seq slurp

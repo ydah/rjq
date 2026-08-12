@@ -2,6 +2,7 @@
 
 module Rjq
   class Parser
+    DEFAULT_MAX_FILTER_DEPTH = 256
     ASSIGNMENT_OPERATORS = ['=', '|=', '+=', '-=', '*=', '/=', '%=', '//='].freeze
     COMPARISON_OPERATORS = %w[== != < <= > >=].freeze
     ADDITIVE_OPERATORS = %w[+ -].freeze
@@ -35,7 +36,11 @@ module Rjq
     }.freeze
 
     def initialize(source, allow_comments: true, source_name: '<top-level>', initial_line: 1, initial_column: 1,
-                   start_offset: 0)
+                   start_offset: 0, max_filter_depth: DEFAULT_MAX_FILTER_DEPTH)
+      unless max_filter_depth.is_a?(Integer) && max_filter_depth.positive?
+        raise ArgumentError, 'max_filter_depth must be a positive Integer'
+      end
+
       @tokens = if source.is_a?(Array)
                   source
                 else
@@ -45,6 +50,8 @@ module Rjq
                 end
       @index = 0
       @definitions = []
+      @max_filter_depth = max_filter_depth
+      @filter_depth = 0
     end
 
     def parse
@@ -210,6 +217,9 @@ module Rjq
     end
 
     def parse_expression(min_precedence = 0)
+      @filter_depth += 1
+      raise error("filter nesting exceeds #{@max_filter_depth}") if @filter_depth > @max_filter_depth
+
       start_token = current
       left = parse_prefix
       loop do
@@ -223,6 +233,8 @@ module Rjq
         left = parse_infix(left, op, precedence)
       end
       add_source_span(left, start_token)
+    ensure
+      @filter_depth -= 1
     end
 
     def parse_infix(left, op, precedence)
