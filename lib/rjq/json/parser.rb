@@ -8,31 +8,38 @@ module Rjq
 
       class << self
         def parse(io_or_string, seq: false, chunk_size: InputBuffer::DEFAULT_CHUNK_SIZE, on_error: nil,
-                  max_depth: DEFAULT_MAX_DEPTH)
+                  max_depth: DEFAULT_MAX_DEPTH, max_number_digits: nil, max_string_bytes: nil)
           new(io_or_string, seq: seq, chunk_size: chunk_size, on_error: on_error,
-                            max_depth: max_depth).parse_stream
+                            max_depth: max_depth, max_number_digits: max_number_digits,
+                            max_string_bytes: max_string_bytes).parse_stream
         end
 
-        def parse_one(io_or_string, seq: false, max_depth: DEFAULT_MAX_DEPTH)
-          values = parse(io_or_string, seq: seq, max_depth: max_depth).take(2)
+        def parse_one(io_or_string, seq: false, chunk_size: InputBuffer::DEFAULT_CHUNK_SIZE,
+                      max_depth: DEFAULT_MAX_DEPTH, max_number_digits: nil, max_string_bytes: nil)
+          values = parse(io_or_string, seq: seq, chunk_size: chunk_size, max_depth: max_depth,
+                                       max_number_digits: max_number_digits, max_string_bytes: max_string_bytes).take(2)
           raise JSONParseError, "expected one JSON value, got #{values.length}" unless values.length == 1
 
           values.first
         end
 
         def parse_records(io_or_string, seq: false, chunk_size: InputBuffer::DEFAULT_CHUNK_SIZE, on_error: nil,
-                          max_depth: DEFAULT_MAX_DEPTH)
+                          max_depth: DEFAULT_MAX_DEPTH, max_number_digits: nil, max_string_bytes: nil)
           new(io_or_string, seq: seq, chunk_size: chunk_size, on_error: on_error,
-                            max_depth: max_depth).parse_stream(locations: true)
+                            max_depth: max_depth, max_number_digits: max_number_digits,
+                            max_string_bytes: max_string_bytes).parse_stream(locations: true)
         end
       end
 
       def initialize(input, seq: false, chunk_size: InputBuffer::DEFAULT_CHUNK_SIZE, on_error: nil,
-                     max_depth: DEFAULT_MAX_DEPTH)
+                     max_depth: DEFAULT_MAX_DEPTH, max_number_digits: nil, max_string_bytes: nil)
+        validate_options!(chunk_size, max_depth, max_number_digits, max_string_bytes)
         @input = InputBuffer.new(input, chunk_size: chunk_size)
         @seq = seq
         @on_error = on_error
         @max_depth = max_depth
+        @max_number_digits = max_number_digits
+        @max_string_bytes = max_string_bytes
         @depth = 0
         @index = 0
         @line = 1
@@ -148,17 +155,25 @@ module Rjq
       def parse_string
         expect('"')
         out = +''
+        bytes = 0
         until eof?
+          line = @line
+          column = @column
           char = advance
           return out.force_encoding(Encoding::UTF_8) if char == '"'
 
-          if char == '\\'
-            out << parse_escape
-          else
+          piece = if char == '\\'
+                    parse_escape
+                  else
             raise_error('unescaped control character in string') if char.ord < 0x20
 
-            out << char
-          end
+                    char
+                  end
+          bytes += piece.bytesize
+          raise_error_at("string exceeds #{@max_string_bytes} byte limit", line, column) if @max_string_bytes &&
+            bytes > @max_string_bytes
+
+          out << piece
         end
         raise_error('unterminated string')
       end
@@ -205,27 +220,26 @@ module Rjq
 
       def parse_number
         start = @index
+        digits = 0
         consume?('-')
-        if consume?('0')
+        if current == '0'
+          digits = consume_number_digit(digits)
           raise_error('leading zero in number') if digit?(current)
         else
           raise_error('expected number') unless digit_1_9?(current)
-          advance while digit?(current)
+          digits = consume_number_digit(digits) while digit?(current)
         end
 
-        float = false
         if consume?('.')
-          float = true
           raise_error('expected digit after decimal point') unless digit?(current)
-          advance while digit?(current)
+          digits = consume_number_digit(digits) while digit?(current)
         end
 
         if %w[e E].include?(current)
-          float = true
           advance
           advance if ['+', '-'].include?(current)
           raise_error('expected digit in exponent') unless digit?(current)
-          advance while digit?(current)
+          digits = consume_number_digit(digits) while digit?(current)
         end
 
         literal = @input[start...@index]
@@ -251,7 +265,8 @@ module Rjq
         raise_error('expected number') unless @input[@index, 3].to_s.casecmp('nan').zero?
 
         3.times { advance }
-        advance while digit?(current)
+        digits = 0
+        digits = consume_number_digit(digits) while digit?(current)
         raise_error('invalid number') if atom_char?(current)
 
         Float::NAN
@@ -309,6 +324,32 @@ module Rjq
         @depth -= 1
       end
 
+      def consume_number_digit(count)
+        count += 1
+        if @max_number_digits && count > @max_number_digits
+          raise_error("number exceeds #{@max_number_digits} digit limit")
+        end
+
+        advance
+        count
+      end
+
+      def validate_options!(chunk_size, max_depth, max_number_digits, max_string_bytes)
+        validate_nonnegative_integer!(:max_depth, max_depth)
+        validate_nonnegative_integer!(:max_number_digits, max_number_digits, optional: true)
+        validate_nonnegative_integer!(:max_string_bytes, max_string_bytes, optional: true)
+        return if chunk_size.is_a?(Integer) && chunk_size.positive?
+
+        raise ArgumentError, 'chunk_size must be a positive Integer'
+      end
+
+      def validate_nonnegative_integer!(name, value, optional: false)
+        return if optional && value.nil?
+        return if value.is_a?(Integer) && value >= 0
+
+        raise ArgumentError, "#{name} must be a non-negative Integer#{' or nil' if optional}"
+      end
+
       def skip_whitespace
         advance while current&.match?(/[ \t\r\n]/)
       end
@@ -354,6 +395,10 @@ module Rjq
 
       def raise_error(message)
         raise JSONParseError, "#{message} at line #{@line}, column #{@column}"
+      end
+
+      def raise_error_at(message, line, column)
+        raise JSONParseError, "#{message} at line #{line}, column #{column}"
       end
     end
   end

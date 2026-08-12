@@ -13,6 +13,35 @@ RSpec.describe Rjq::JSON::Parser do
     expect(value.to_s).to eq("1#{'0' * 100}")
   end
 
+  it 'limits number digits incrementally before numeric conversion' do
+    expect(described_class.parse_one('-12.3e4', max_number_digits: 4).literal).to eq('-12.3e4')
+    expect { described_class.parse_one("0\n12.3e4", max_number_digits: 3) }
+      .to raise_error(Rjq::JSONParseError, /number exceeds 3 digit limit at line 2, column 6/)
+
+    input = StringIO.new('1' * 1_000_000)
+    expect { described_class.parse(input, chunk_size: 3, max_number_digits: 10).to_a }
+      .to raise_error(Rjq::JSONParseError, /number exceeds 10 digit limit at line 1, column 11/)
+    expect(input.pos).to be <= 12
+  end
+
+  it 'limits decoded string bytes across raw and escaped Unicode' do
+    expect(described_class.parse_one('"😀"', max_string_bytes: 4)).to eq('😀')
+    expect(described_class.parse_one('"\\u00e9"', max_string_bytes: 2)).to eq('é')
+    expect { described_class.parse_one('"😀"', max_string_bytes: 3, chunk_size: 1) }
+      .to raise_error(Rjq::JSONParseError, /string exceeds 3 byte limit at line 1, column 2/)
+    expect { described_class.parse_one('{"é":1}', max_string_bytes: 1) }
+      .to raise_error(Rjq::JSONParseError, /string exceeds 1 byte limit at line 1, column 3/)
+  end
+
+  it 'validates parser resource options' do
+    expect { described_class.parse_one('0', max_number_digits: -1) }
+      .to raise_error(ArgumentError, /max_number_digits must be a non-negative Integer or nil/)
+    expect { described_class.parse_one('""', max_string_bytes: 1.5) }
+      .to raise_error(ArgumentError, /max_string_bytes must be a non-negative Integer or nil/)
+    expect { described_class.parse_one('null', chunk_size: 0) }
+      .to raise_error(ArgumentError, /chunk_size must be a positive Integer/)
+  end
+
   it 'rejects adjacent JSON atoms that are not separated' do
     expect { described_class.parse('1true').to_a }.to raise_error(Rjq::JSONParseError)
     expect { described_class.parse('1-2').to_a }.to raise_error(Rjq::JSONParseError)

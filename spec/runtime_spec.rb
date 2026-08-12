@@ -252,6 +252,7 @@ RSpec.describe Rjq do
       .to raise_error(ArgumentError, /allow_comments must be true or false/)
     expect { described_class.compile('.', library_path: ['ok', 1]) }
       .to raise_error(ArgumentError, /library_path must be an Array of Strings/)
+
   end
 
   it 'does not let try or optional catch halt signals' do
@@ -334,6 +335,16 @@ RSpec.describe Rjq do
 
     expect(result).to eq([1])
     expect(io.pos).to be < io.size
+  end
+
+  it 'passes JSON token budgets to normal and streaming input parsers' do
+    expect do
+      described_class.run_stream('.', io: StringIO.new('1234'), opts: { max_number_digits: 3 }).to_a
+    end.to raise_error(Rjq::JSONParseError, /number exceeds 3 digit limit/)
+    expect do
+      described_class.run_stream('.', io: StringIO.new('["abcd"]'),
+                                      opts: { stream: true, max_string_bytes: 3 }).to_a
+    end.to raise_error(Rjq::JSONParseError, /string exceeds 3 byte limit/)
   end
 
   it 'closes owned input streams when a consumer stops early' do

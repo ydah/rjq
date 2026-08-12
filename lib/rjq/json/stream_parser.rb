@@ -16,19 +16,23 @@ module Rjq
 
       class << self
         def parse(io_or_string, seq: false, stream_errors: false, chunk_size: InputBuffer::DEFAULT_CHUNK_SIZE,
-                  on_error: nil, max_depth: DEFAULT_MAX_DEPTH)
+                  on_error: nil, max_depth: DEFAULT_MAX_DEPTH, max_number_digits: nil, max_string_bytes: nil)
           new(io_or_string, seq: seq, stream_errors: stream_errors, chunk_size: chunk_size,
-                            on_error: on_error, max_depth: max_depth).parse
+                            on_error: on_error, max_depth: max_depth, max_number_digits: max_number_digits,
+                            max_string_bytes: max_string_bytes).parse
         end
       end
 
       def initialize(input, seq: false, stream_errors: false, chunk_size: InputBuffer::DEFAULT_CHUNK_SIZE,
-                     on_error: nil, max_depth: DEFAULT_MAX_DEPTH)
+                     on_error: nil, max_depth: DEFAULT_MAX_DEPTH, max_number_digits: nil, max_string_bytes: nil)
+        validate_options!(chunk_size, max_depth, max_number_digits, max_string_bytes)
         @input = InputBuffer.new(input, chunk_size: chunk_size)
         @seq = seq
         @stream_errors = stream_errors
         @on_error = on_error
         @max_depth = max_depth
+        @max_number_digits = max_number_digits
+        @max_string_bytes = max_string_bytes
         @depth = 0
         @index = 0
         @line = 1
@@ -82,7 +86,7 @@ module Rjq
         when '['
           parse_array(path)
         when '"'
-          Result.new(events: [[path, parse_string]], close_path: path)
+          Result.new(events: [[path, parse_string(path)]], close_path: path)
         when 't'
           consume_literal('true', path)
           Result.new(events: [[path, true]], close_path: path)
@@ -116,7 +120,7 @@ module Rjq
           raise_error('Expected another key:value pair', path + [nil]) if current == '}'
           raise_error('Expected another key:value pair', path + [nil]) unless current == '"'
 
-          key = parse_string
+          key = parse_string(path + [nil])
           skip_whitespace
           unless consume?(':')
             raise_error('Unfinished JSON term at EOF', path + [nil]) if eof?
@@ -196,20 +200,29 @@ module Rjq
         result.events.each { |event| @events << event }
       end
 
-      def parse_string
+      def parse_string(path = [])
         expect('"', [])
         out = +''
+        bytes = 0
         until eof?
+          line = @line
+          column = @column
           char = advance
           return out.force_encoding(Encoding::UTF_8) if char == '"'
 
-          if char == '\\'
-            out << parse_escape
-          else
-            raise_error('unescaped control character in string', []) if char.ord < 0x20
+          piece = if char == '\\'
+                    parse_escape
+                  else
+                    raise_error('unescaped control character in string', path) if char.ord < 0x20
 
-            out << char
+                    char
+                  end
+          bytes += piece.bytesize
+          if @max_string_bytes && bytes > @max_string_bytes
+            raise_error_at("string exceeds #{@max_string_bytes} byte limit", path, line, column)
           end
+
+          out << piece
         end
         raise_error('Unfinished JSON term at EOF', [])
       end
@@ -256,27 +269,26 @@ module Rjq
 
       def parse_number(path)
         start = @index
+        digits = 0
         consume?('-')
-        if consume?('0')
+        if current == '0'
+          digits = consume_number_digit(digits, path)
           invalid_numeric_literal(path) if digit?(current)
         else
           invalid_numeric_literal(path) unless digit_1_9?(current)
-          advance while digit?(current)
+          digits = consume_number_digit(digits, path) while digit?(current)
         end
 
-        float = false
         if consume?('.')
-          float = true
           invalid_numeric_literal(path) unless digit?(current)
-          advance while digit?(current)
+          digits = consume_number_digit(digits, path) while digit?(current)
         end
 
         if %w[e E].include?(current)
-          float = true
           advance
           advance if ['+', '-'].include?(current)
           invalid_numeric_literal(path) unless digit?(current)
-          advance while digit?(current)
+          digits = consume_number_digit(digits, path) while digit?(current)
         end
 
         literal = @input[start...@index]
@@ -345,6 +357,32 @@ module Rjq
         yield
       ensure
         @depth -= 1
+      end
+
+      def consume_number_digit(count, path)
+        count += 1
+        if @max_number_digits && count > @max_number_digits
+          raise_error("Number exceeds #{@max_number_digits} digit limit", path)
+        end
+
+        advance
+        count
+      end
+
+      def validate_options!(chunk_size, max_depth, max_number_digits, max_string_bytes)
+        validate_nonnegative_integer!(:max_depth, max_depth)
+        validate_nonnegative_integer!(:max_number_digits, max_number_digits, optional: true)
+        validate_nonnegative_integer!(:max_string_bytes, max_string_bytes, optional: true)
+        return if chunk_size.is_a?(Integer) && chunk_size.positive?
+
+        raise ArgumentError, 'chunk_size must be a positive Integer'
+      end
+
+      def validate_nonnegative_integer!(name, value, optional: false)
+        return if optional && value.nil?
+        return if value.is_a?(Integer) && value >= 0
+
+        raise ArgumentError, "#{name} must be a non-negative Integer#{' or nil' if optional}"
       end
 
       def skip_whitespace
@@ -423,6 +461,10 @@ module Rjq
 
       def raise_error(message, path)
         raise StreamError.new(message: "#{message} at line #{line_number}, column #{column_number}", path: path)
+      end
+
+      def raise_error_at(message, path, line, column)
+        raise StreamError.new(message: "#{message} at line #{line}, column #{column}", path: path)
       end
 
       def line_number

@@ -51,7 +51,22 @@ require "rjq"
 
 Rjq.run(".foo | .[]", {"foo" => [1, 2, 3]}).to_a
 # => [1, 2, 3]
+
+# Optional resource limits for untrusted JSON input and filters:
+Rjq.run_stream(".", io: input_io, opts: {
+  input_chunk_size: 16_384,
+  input_max_depth: 128,
+  max_number_digits: 1_000,
+  max_string_bytes: 1_048_576,
+  max_outputs: 10_000,
+  regexp_timeout: 0.1
+}).to_a
 ```
+
+`max_number_digits` counts all digits in a JSON number literal, including fractional and exponent digits.
+`max_string_bytes` limits each decoded JSON string (including object keys) by UTF-8 byte size. Both default to
+`nil` (unlimited) for jq compatibility. Invalid or unknown Ruby API options are rejected before compilation or input
+processing.
 
 Inspect compiled bytecode:
 

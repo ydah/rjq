@@ -27,5 +27,8 @@ Production code has no fixture-name fallback. `ModuleResolver` accepts explicit 
 
 ## Resource boundaries
 
-JSON parsing uses jq's 256-container depth limit. Module bytes and dependency depth are limited. Embedded callers can set `max_outputs` and `input_chunk_size`; `input_max_depth` can lower the parser depth limit. Cyclic Ruby values and invalid JSON value types are rejected before copying or output.
-
+JSON parsing uses jq's 256-container depth limit. Module bytes and dependency depth are limited. Embedded callers can
+set `max_outputs` and `input_chunk_size`; `input_max_depth` can lower the parser depth limit. `max_number_digits` and
+`max_string_bytes` are optional, unlimited by default, and stop oversized tokens incrementally before numeric
+conversion or decoded-string growth. Public runtime and compiler APIs reject unknown options and invalid limits at
+construction. Cyclic Ruby values and invalid JSON value types are rejected before copying or output.

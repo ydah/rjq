@@ -34,4 +34,21 @@ RSpec.describe Rjq::JSON::StreamParser do
     expect(event.first).to include('Exceeds depth limit for parsing')
     expect(event.last.length).to eq(256)
   end
+
+  it 'enforces token limits across chunks with stream paths and locations' do
+    number = described_class.parse(StringIO.new('[12345]'), chunk_size: 2, stream_errors: true,
+                                                                  max_number_digits: 4).to_a.last
+    string = described_class.parse(StringIO.new('["😀"]'), chunk_size: 1, stream_errors: true,
+                                                                  max_string_bytes: 3).to_a.last
+
+    expect(number).to eq(['Number exceeds 4 digit limit at line 1, column 6', [0]])
+    expect(string).to eq(['string exceeds 3 byte limit at line 1, column 3', [0]])
+  end
+
+  it 'raises controlled parse errors for limits when stream errors are disabled' do
+    expect { described_class.parse('{"key":"value"}', max_string_bytes: 3).to_a }
+      .to raise_error(Rjq::JSONParseError, /string exceeds 3 byte limit at line 1, column 12/)
+    expect { described_class.parse('1.2e3', max_number_digits: 2).to_a }
+      .to raise_error(Rjq::JSONParseError, /Number exceeds 2 digit limit at line 1, column 5/)
+  end
 end

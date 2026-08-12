@@ -301,7 +301,8 @@ module Rjq
 
       JSON::Parser.parse_records(io, seq: @opts[:seq], chunk_size: input_chunk_size,
                                      on_error: method(:warn_ignored_parse_error),
-                                     max_depth: input_max_depth).lazy.map do |parsed|
+                                     max_depth: input_max_depth, max_number_digits: @opts[:max_number_digits],
+                                     max_string_bytes: @opts[:max_string_bytes]).lazy.map do |parsed|
         InputRecord.new(value: parsed.value, filename: filename, line: parsed.line)
       end
     end
@@ -319,7 +320,8 @@ module Rjq
       JSON::StreamParser.parse(io, seq: @opts[:seq], stream_errors: @opts[:stream_errors],
                                    chunk_size: input_chunk_size,
                                    on_error: method(:warn_ignored_parse_error),
-                                   max_depth: input_max_depth).lazy.map do |event|
+                                   max_depth: input_max_depth, max_number_digits: @opts[:max_number_digits],
+                                   max_string_bytes: @opts[:max_string_bytes]).lazy.map do |event|
         InputRecord.new(value: event, filename: filename, line: 1)
       end
     end
