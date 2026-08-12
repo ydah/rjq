@@ -61,6 +61,7 @@ Rjq.run_stream(".", io: input_io, opts: {
   max_filter_depth: 128,
   max_call_depth: 64,
   max_instructions: 1_000_000,
+  max_replay_cache: 10_000,
   max_outputs: 10_000,
   regexp_timeout: 0.1
 }).to_a
@@ -78,6 +79,8 @@ countdown-style recursion does not consume the Ruby stack. `max_call_depth` and 
 bytecode instructions actually demanded by the consumer. Call and instruction limits are host safety boundaries and
 cannot be caught by jq `try` or `?`. The same three controls are available to the CLI as
 `--max-filter-depth`, `--max-call-depth`, and `--max-instructions`.
+`max_replay_cache` (also available as `--max-replay-cache`) bounds values retained when a generated index filter must
+be replayed for multiple upstream values; it is unlimited by default for jq compatibility.
 
 Inspect compiled bytecode:
 

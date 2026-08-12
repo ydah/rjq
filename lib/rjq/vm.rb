@@ -253,6 +253,10 @@ module Rjq
 
             begin
               value = source.next
+              maximum = @opts[:max_replay_cache]
+              if maximum && cache.length >= maximum
+                raise ResourceLimitError, "replay cache limit exceeded (#{maximum})"
+              end
               cache << value
               yielder << value
               index += 1

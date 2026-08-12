@@ -248,6 +248,8 @@ RSpec.describe Rjq do
     expect { described_class.run('.', nil, max_call_depth: nil) }.not_to raise_error
     expect { described_class.run('.', nil, max_instructions: -1) }
       .to raise_error(ArgumentError, /max_instructions must be an Integer at least 0/)
+    expect { described_class.run('.', nil, max_replay_cache: -1) }
+      .to raise_error(ArgumentError, /max_replay_cache must be an Integer at least 0/)
     expect { described_class.run('.', nil, variables: []) }
       .to raise_error(ArgumentError, /variables must be a Hash/)
     expect { described_class.run('.', nil, instruction_budget: Object.new) }
@@ -327,6 +329,15 @@ RSpec.describe Rjq do
       .to raise_error(ArgumentError, /unknown runtime option: :instruction_budget/)
     expect { compiled.run_with_instruction_budget(nil, { max_instructions: 0 }, forged).to_a }
       .to raise_error(ArgumentError, /instruction budget must match max_instructions/)
+  end
+
+  it 'bounds replay caches without making the limit catchable by filters' do
+    filter = 'try (.[][(0,1,2)]) catch .'
+
+    expect(described_class.run('.[][(0,1)]', [[10, 11], [20, 21]], max_replay_cache: 2).to_a)
+      .to eq([10, 11, 20, 21])
+    expect { described_class.run(filter, [[10, 11], [20, 21]], max_replay_cache: 2).to_a }
+      .to raise_error(Rjq::ResourceLimitError, 'replay cache limit exceeded (2)')
   end
 
   it 'does not let try or optional catch halt signals' do

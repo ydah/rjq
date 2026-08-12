@@ -46,6 +46,15 @@ RSpec.describe Rjq::CLI do
 
     expect(code).to eq(2)
     expect(err.string).to include('--max-instructions must be at least 0')
+
+    out = StringIO.new
+    err = StringIO.new
+    code = described_class.new(['-nc', '--max-replay-cache', '1',
+                                '[[10,11],[20,21]] | .[][(0,1)]'], stdin: StringIO.new,
+                                                                          stdout: out, stderr: err).run
+    expect(code).to eq(5)
+    expect(out.string).to eq("10\n")
+    expect(err.string).to include('replay cache limit exceeded (1)')
   end
 
   it 'reports locations from filter files' do

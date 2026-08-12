@@ -12,7 +12,7 @@ module Rjq
     OPTION_KEYS = (DEFAULT_OPTIONS.keys + %i[
       allow_comments color current_filename current_line exit_status input_chunk_size input_max_depth input_queue
       jq_origin library_path max_filter_depth max_number_digits max_string_bytes module_resolver regexp_timeout
-      remaining_inputs source_path stderr
+      max_replay_cache remaining_inputs source_path stderr
     ]).freeze
     BOOLEAN_OPTIONS = %i[
       allow_comments ascii compact exit_status join_output null_input raw_input raw_output raw_output0 seq slurp
@@ -33,6 +33,7 @@ module Rjq
         validate_integer!(opts, :input_max_depth, minimum: 0)
         validate_integer!(opts, :max_call_depth, minimum: 1, optional: true)
         validate_integer!(opts, :max_instructions, minimum: 0, optional: true)
+        validate_integer!(opts, :max_replay_cache, minimum: 0, optional: true)
         validate_integer!(opts, :current_line, minimum: 1, optional: true)
         validate_integer!(opts, :max_number_digits, minimum: 0, optional: true)
         validate_integer!(opts, :max_outputs, minimum: 0, optional: true)

@@ -40,6 +40,7 @@ module Rjq
             --max-filter-depth n  reject filters nested deeper than n;
             --max-call-depth n    bound non-tail user-function calls;
             --max-instructions n  bound executed bytecode instructions;
+            --max-replay-cache n  bound values cached for filter replay;
         -f, --from-file file      load filter from the file;
         -L directory              search modules from the directory;
             --arg name value      set $name to the string value;
@@ -195,6 +196,8 @@ module Rjq
         @opts[:max_call_depth] = validate_limit(next_arg('--max-call-depth'), '--max-call-depth', minimum: 1)
       when '--max-instructions'
         @opts[:max_instructions] = validate_limit(next_arg('--max-instructions'), '--max-instructions', minimum: 0)
+      when '--max-replay-cache'
+        @opts[:max_replay_cache] = validate_limit(next_arg('--max-replay-cache'), '--max-replay-cache', minimum: 0)
       when '--indent'
         @opts[:indent] = validate_indent(next_arg('--indent', '--indent takes one parameter'))
         @opts[:tab] = false
