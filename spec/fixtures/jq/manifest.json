@@ -1,0 +1,9 @@
+{
+  "upstream": "https://github.com/jqlang/jq",
+  "tag": "jq-1.7.1",
+  "adapted": true,
+  "files": {
+    "jq.test": "35aade216e95e78e63e77011fb4588856a5d04d6ac7be572ad382a3430d8b4d5",
+    "onig.test": "af6f33f8903efae6d15d97ca94017cb439a7fdda51506618bd85100b17a72444"
+  }
+}

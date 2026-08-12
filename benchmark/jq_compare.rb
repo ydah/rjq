@@ -52,10 +52,9 @@ end
 
 def measure(command, scenario)
   run_command(command, scenario.jq_filter, scenario.input)
-  times = Array.new(ITERATIONS) do
+  Array.new(ITERATIONS) do
     Benchmark.realtime { run_command(command, scenario.jq_filter, scenario.input) }
   end
-  times.sum / times.length
 end
 
 def milliseconds(seconds)
@@ -64,19 +63,29 @@ end
 
 jq_available = jq_available?
 
-puts '| scenario | rjq ms | jq ms | jq/rjq |'
-puts '| --- | ---: | ---: | ---: |'
+def percentile(samples, fraction)
+  sorted = samples.sort
+  sorted[[(sorted.length * fraction).ceil - 1, 0].max]
+end
+
+puts '| scenario | rjq median ms | rjq p95 ms | jq median ms | jq p95 ms | jq/rjq |'
+puts '| --- | ---: | ---: | ---: | ---: | ---: |'
 
 SCENARIOS.each do |scenario|
-  rjq_time = measure(RJQ, scenario)
+  rjq_times = measure(RJQ, scenario)
+  rjq_median = percentile(rjq_times, 0.5)
   if jq_available
-    jq_time = measure(JQ, scenario)
     rjq_output = run_command(RJQ, scenario.jq_filter, scenario.input)
     jq_output = run_command(JQ, scenario.jq_filter, scenario.input)
-    warn "output mismatch for #{scenario.name}" unless rjq_output == jq_output
-    ratio = jq_time / rjq_time
-    puts "| #{scenario.name} | #{milliseconds(rjq_time)} | #{milliseconds(jq_time)} | #{ratio.round(2)} |"
+    raise "output mismatch for #{scenario.name}" unless rjq_output == jq_output
+
+    jq_times = measure(JQ, scenario)
+    jq_median = percentile(jq_times, 0.5)
+    ratio = jq_median / rjq_median
+    puts "| #{scenario.name} | #{milliseconds(rjq_median)} | #{milliseconds(percentile(rjq_times, 0.95))} | " \
+         "#{milliseconds(jq_median)} | #{milliseconds(percentile(jq_times, 0.95))} | #{ratio.round(2)} |"
   else
-    puts "| #{scenario.name} | #{milliseconds(rjq_time)} | n/a | n/a |"
+    puts "| #{scenario.name} | #{milliseconds(rjq_median)} | #{milliseconds(percentile(rjq_times, 0.95))} | " \
+         'n/a | n/a | n/a |'
   end
 end

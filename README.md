@@ -1,8 +1,8 @@
 # rjq
 
-`rjq` is a pure Ruby JSON processor with a jq-compatible command line and Ruby API.
+`rjq` is a Ruby JSON processor implementing a practical jq 1.7.1-compatible subset with a command line and Ruby API.
 
-The runtime uses its own JSON parser and dumper instead of Ruby's `json` library.
+The runtime uses its own incremental JSON parser and writer instead of Ruby's `json` library. The gem has no project-specific native extension; Bessel math functions call the platform C math library through `fiddle`.
 
 ## Installation
 
@@ -61,7 +61,7 @@ puts Rjq.compile(".foo | .[]").disasm
 
 ## Compatibility
 
-The current implementation passes the bundled jq 1.7.1 compatibility fixtures:
+The current implementation passes the bundled, adapted jq 1.7.1 regression fixtures:
 
 ```sh
 ruby script/official_compat.rb
@@ -71,18 +71,26 @@ ruby script/official_compat.rb spec/fixtures/jq/onig.test
 # checked=40 failures=0
 ```
 
-The same fixtures are integrated into RSpec under `spec/compat`, so CI runs them as normal tests.
+The same fixtures are integrated into RSpec under `spec/compat`, so CI runs them as normal tests. Fixture success uses rjq's own value model and is not presented as proof of complete jq compatibility.
+
+An independent differential suite invokes a checksum-pinned jq 1.7.1 executable and compares stdout bytes, normalized stderr, exit status, output count, and ordering:
+
+```sh
+JQ_BIN=/path/to/jq-1.7.1 bundle exec rake differential
+```
 
 Supported areas include:
 
 - jq values, ordering, truthiness, and numeric edge cases
-- pure Ruby JSON parser/dumper, including jq-style `NaN`, `Infinity`, and `-0`
+- incremental JSON parser and direct writer, including jq-style `NaN`, `Infinity`, and `-0`
 - jq-compatible `--stream` input, including close markers, and `--stream-errors` parse-error arrays
 - field/index/slice access, iteration, pipes, commas, conditionals, `try/catch`, labels and breaks
 - bindings, structured bindings, functions, local `def`, filter arguments, and recursive functions
 - path expressions, assignment/update operators, `del`, `getpath`, `setpath`, `delpaths`
 - core, array, string, math, date/time, format, SQL-style, stream, and regex builtins
 - `jq.test` success cases, `%%FAIL` rejection cases, and `onig.test` success cases
+
+See [COMPATIBILITY.md](COMPATIBILITY.md) for the compatibility contract, known differences, exit statuses, extensions, and accepted Ruby value types.
 
 ## Bytecode VM
 
@@ -100,8 +108,11 @@ rather than an `eval_node` fallback.
 
 The VM stores instruction results as enumerator-backed streams on the stack. `each`, `pipe`, comma-style append,
 branching, binary cross-products, object construction, `reduce`, `foreach`, local function calls, filter arguments,
-and recursion preserve continuations lazily. Array constructors and aggregating builtins collect only at the jq
-semantic boundaries that require a complete value.
+recursion, `range`, `repeat`, `while`, `until`, and input builtins preserve continuations lazily. Array constructors,
+slurp, and aggregating builtins collect only at the jq semantic boundaries that require a complete value. Input files
+and stream events are read incrementally and owned file handles close when downstream evaluation stops early.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for execution phases, number semantics, module resolution, streaming, and resource boundaries.
 
 ## Development
 
@@ -122,6 +133,7 @@ Individual checks:
 ```sh
 bundle exec rake spec
 bundle exec rake compat
+bundle exec rake differential
 ruby script/official_compat.rb
 ruby script/official_compat.rb spec/fixtures/jq/onig.test
 ```
@@ -138,11 +150,12 @@ If `jq` is available on `PATH`, the benchmark prints a Markdown comparison table
 ITERATIONS=50 ruby benchmark/jq_compare.rb
 ```
 
-GitHub Actions runs `bundle exec rake` on Ruby 3.1, 3.2, 3.3, and 3.4.
+GitHub Actions runs the suite on Ruby 3.1 through 4.0 plus experimental Ruby head, runs a macOS portability job,
+executes the pinned jq 1.7.1 differential suite, and builds and installs the gem as a smoke test.
 
 ## Contributing
 
-Bug reports and pull requests are welcome on GitHub at https://github.com/ydah/rjq.
+Bug reports and pull requests are welcome on GitHub at https://github.com/ydah/rjq. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
 ## License
 

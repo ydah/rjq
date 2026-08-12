@@ -1,0 +1,19 @@
+name: Bug report
+description: Report incorrect rjq behavior
+body:
+  - type: textarea
+    attributes:
+      label: Reproduction
+      description: Include the filter, exact input, flags, output, and expected output.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Versions
+      description: Output of `rjq --version`, `ruby --version`, and, when relevant, `jq --version`.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Additional context
+

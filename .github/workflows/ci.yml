@@ -4,19 +4,34 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
       matrix:
-        ruby: 
-          - "3.1"
-          - "3.2"
-          - "3.3"
-          - "3.4"
-          - "4.0"
-          - "head"
+        include:
+          - ruby: "3.1"
+            experimental: false
+          - ruby: "3.2"
+            experimental: false
+          - ruby: "3.3"
+            experimental: false
+          - ruby: "3.4"
+            experimental: false
+          - ruby: "4.0"
+            experimental: false
+          - ruby: head
+            experimental: true
     steps:
       - uses: actions/checkout@v6
       - uses: ruby/setup-ruby@v1
@@ -24,3 +39,62 @@ jobs:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
       - run: bundle exec rake
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - run: bundle exec rake
+
+  differential:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: Install pinned jq 1.7.1 oracle
+        run: |
+          curl -fsSL https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64 -o "$RUNNER_TEMP/jq-1.7.1"
+          echo "5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5  $RUNNER_TEMP/jq-1.7.1" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/jq-1.7.1"
+      - run: bundle exec rake differential
+        env:
+          JQ_BIN: ${{ runner.temp }}/jq-1.7.1
+
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - run: bundle exec rake spec
+        env:
+          COVERAGE: "true"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage
+
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - run: gem build rjq.gemspec
+      - run: gem install ./rjq-*.gem
+      - run: "rjq -nc '{installed: true}'"
