@@ -66,7 +66,9 @@ Rjq.run_stream(".", io: input_io, opts: {
 `max_number_digits` counts all digits in a JSON number literal, including fractional and exponent digits.
 `max_string_bytes` limits each decoded JSON string (including object keys) by UTF-8 byte size. Both default to
 `nil` (unlimited) for jq compatibility. Invalid or unknown Ruby API options are rejected before compilation or input
-processing.
+processing. Passing `nil` for `stderr` or `module_resolver` selects the normal process stderr or default module
+resolver, respectively. Option hashes and their `variables` and `library_path` containers are copied before lazy
+execution begins.
 
 Inspect compiled bytecode:
 

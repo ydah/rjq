@@ -15,7 +15,7 @@ module Rjq
     end
 
     def run(input_value, opts = {})
-      VM.new(self, opts).run(input_value)
+      VM.new(self, Runtime.normalize_options(opts)).run(input_value)
     end
 
     def disasm
@@ -277,6 +277,13 @@ module Rjq
         opts
       end
 
+      def normalize_options(opts)
+        validate_options!(opts)
+        normalized = opts.dup
+        normalized[:library_path] = normalized[:library_path].dup.freeze if normalized[:library_path]
+        normalized.freeze
+      end
+
       private
 
       def validate_boolean!(opts, key)
@@ -300,14 +307,15 @@ module Rjq
       end
 
       def validate_module_resolver!(resolver)
+        return if resolver.nil?
         return if resolver.respond_to?(:resolve) && resolver.respond_to?(:initial_metadata)
 
-        raise ArgumentError, 'module_resolver must respond to resolve and initial_metadata'
+        raise ArgumentError, 'module_resolver must be nil or respond to resolve and initial_metadata'
       end
     end
 
     def initialize(opts = {})
-      @opts = self.class.validate_options!(opts).dup.freeze
+      @opts = self.class.normalize_options(opts)
     end
 
     def compile(filter_string)

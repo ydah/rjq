@@ -9,8 +9,9 @@ module Rjq
       stream_errors: false, unbuffered: false, max_outputs: nil, variables: {}
     }.freeze
     OPTION_KEYS = (DEFAULT_OPTIONS.keys + %i[
-      allow_comments color exit_status input_chunk_size input_max_depth library_path max_number_digits
-      max_string_bytes module_resolver regexp_timeout source_path stderr
+      allow_comments color current_filename current_line exit_status input_chunk_size input_max_depth input_queue
+      jq_origin library_path max_number_digits max_string_bytes module_resolver regexp_timeout remaining_inputs
+      source_path stderr
     ]).freeze
     BOOLEAN_OPTIONS = %i[
       allow_comments ascii compact exit_status join_output null_input raw_input raw_output raw_output0 seq slurp
@@ -29,6 +30,7 @@ module Rjq
         validate_integer!(opts, :indent, minimum: 0, maximum: 7)
         validate_integer!(opts, :input_chunk_size, minimum: 1)
         validate_integer!(opts, :input_max_depth, minimum: 0)
+        validate_integer!(opts, :current_line, minimum: 1, optional: true)
         validate_integer!(opts, :max_number_digits, minimum: 0, optional: true)
         validate_integer!(opts, :max_outputs, minimum: 0, optional: true)
         validate_integer!(opts, :max_string_bytes, minimum: 0, optional: true)
@@ -37,6 +39,14 @@ module Rjq
         validate_variables!(opts)
         Compiler.validate_options!(Compiler.options_from(opts))
         opts
+      end
+
+      def normalize_options(opts)
+        validate_options!(opts)
+        normalized = opts.dup
+        normalized[:variables] = normalized[:variables].dup.freeze if normalized[:variables]
+        normalized[:library_path] = normalized[:library_path].dup.freeze if normalized[:library_path]
+        normalized.freeze
       end
 
       private
@@ -79,9 +89,9 @@ module Rjq
 
       def validate_stderr!(opts)
         return unless opts.key?(:stderr)
-        return if opts[:stderr].respond_to?(:puts)
+        return if opts[:stderr].nil? || opts[:stderr].respond_to?(:puts)
 
-        raise ArgumentError, 'stderr must respond to puts'
+        raise ArgumentError, 'stderr must be nil or respond to puts'
       end
 
       def validate_variables!(opts)
@@ -171,8 +181,7 @@ module Rjq
 
     def initialize(filter_string, opts = {})
       @filter_string = filter_string || '.'
-      self.class.validate_options!(opts)
-      @opts = DEFAULT_OPTIONS.merge(opts).freeze
+      @opts = self.class.normalize_options(DEFAULT_OPTIONS.merge(opts))
       @program = Rjq.compile(@filter_string, Compiler.options_from(@opts))
     end
 

@@ -253,6 +253,14 @@ RSpec.describe Rjq do
     expect { described_class.compile('.', library_path: ['ok', 1]) }
       .to raise_error(ArgumentError, /library_path must be an Array of Strings/)
 
+    program = described_class.compile('$x')
+    expect { program.run(nil, typo_option: true) }
+      .to raise_error(ArgumentError, /unknown runtime option: :typo_option/)
+    variables = { 'x' => 1 }
+    output = program.run(nil, variables: variables, stderr: nil)
+    variables['x'] = 2
+    expect(output.to_a).to eq([1])
+    expect { described_class.compile('.', module_resolver: nil) }.not_to raise_error
   end
 
   it 'does not let try or optional catch halt signals' do
