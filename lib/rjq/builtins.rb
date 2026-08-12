@@ -50,7 +50,7 @@ module Rjq
       'map_values' => [0], 'recurse' => [0, 1], 'recurse_down' => [0, 1], 'path' => [0], 'paths' => [0],
       'leaf_paths' => [0], 'del' => [0], 'pick' => [0], 'walk' => [0], 'fromstream' => [0],
       'truncate_stream' => [0], 'min_by' => [0], 'max_by' => [0], 'sort_by' => [0], 'group_by' => [0],
-      'GROUP_BY' => [0], 'unique_by' => [0], 'UNIQUE_BY' => [0], 'first' => [0], 'last' => [0], 'nth' => [1],
+      'GROUP_BY' => [0], 'unique_by' => [0], 'UNIQUE_BY' => [0], 'first' => [0], 'last' => [0], 'nth' => [0, 1],
       'limit' => [1], 'until' => [0, 1], 'while' => [0, 1], 'repeat' => [0], 'isempty' => [0],
       'sub' => [1], 'gsub' => [1]
     }.transform_values(&:freeze).freeze
@@ -791,8 +791,13 @@ module Rjq
                      end
           if args.length > 1
             condition = args[1]
-            children = children.lazy.select do |child|
-              filter_stream(condition, child, context).any? { |result| Value.truthy?(result) }
+            source_children = children
+            children = Enumerator.new do |child_yielder|
+              source_children.each do |child|
+                filter_stream(condition, child, context).each do |result|
+                  child_yielder << child if Value.truthy?(result)
+                end
+              end
             end
           end
           stack << children.each
@@ -1138,16 +1143,18 @@ module Rjq
     end
 
     def nth(input, context, args)
-      args.fetch(0).eval(input, context).flat_map do |raw_index|
-        index = numeric(raw_index).ceil
-        raise RuntimeError, "nth doesn't support negative indices" if index.negative?
+      Enumerator.new do |yielder|
+        filter_stream(args.fetch(0), input, context).each do |raw_index|
+          index = numeric(raw_index).ceil
+          raise RuntimeError, "nth doesn't support negative indices" if index.negative?
 
-        if args.length > 1
-          values = args[1].take(input, context, index + 1)
-          index >= values.length ? [] : [values[index]]
-        else
-          values = assert_array(input)
-          index >= values.length ? [] : [values[index]]
+          if args.length > 1
+            values = args[1].take(input, context, index + 1)
+            yielder << values[index] if index < values.length
+          else
+            values = assert_array(input)
+            yielder << values[index] if index < values.length
+          end
         end
       end
     end

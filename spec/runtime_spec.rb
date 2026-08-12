@@ -20,10 +20,27 @@ RSpec.describe Rjq do
   it 'keeps generators lazy and removes fixed iteration cutoffs' do
     expect(described_class.run('first(range(0; 1000000000000))', nil).to_a).to eq([0])
     expect(described_class.run('nth(0; (1, error("not reached")))', nil).to_a).to eq([1])
+    expect(described_class.run('[nth((0,2); (0,1,2,error("not reached")))]', nil).to_a).to eq([[0, 2]])
     expect(described_class.run('limit(2; recurse(1, error("not reached")))', nil).to_a).to eq([nil, 1])
     expect(described_class.run('limit(5; repeat(. + 1))', nil).to_a).to eq([1, 1, 1, 1, 1])
     expect(described_class.run('while(. < 3; . + 1, . + 2)', nil).to_a).to eq([nil, 1, 2, 2])
     expect(described_class.run('until(. >= 3; . + 1, . + 2)', nil).to_a).to eq([3, 4, 3, 3, 4])
+  end
+
+  it 'preserves recurse condition branches and delayed errors' do
+    filter = '[recurse(if . < 2 then . + 1 else empty end; (true, true))]'
+    expect(described_class.run(filter, 0).to_a).to eq([[0, 1, 2, 2, 1, 2, 2]])
+
+    filter = 'try [recurse(if . < 1 then . + 1 else empty end; (true, error("condition boom")))] catch .'
+    expect(described_class.run(filter, 0).to_a).to eq(['condition boom'])
+  end
+
+  it 'emits selected nth values before a later generated-index error' do
+    values = []
+    output = described_class.run('nth((0, error("index boom")); (1, error("source boom")))', nil)
+
+    expect { output.each { |value| values << value } }.to raise_error(Rjq::ErrorValue, 'index boom')
+    expect(values).to eq([1])
   end
 
   it 'traverses deeply nested values without Ruby recursion' do
