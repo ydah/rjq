@@ -215,6 +215,24 @@ RSpec.describe Rjq::CLI do
     expect(err.string).to include('JSON parse error')
   end
 
+  it 'reports regular expression timeouts as runtime errors' do
+    skip 'global regexp timeouts are unavailable' unless Regexp.respond_to?(:timeout=)
+
+    previous_timeout = Regexp.timeout
+    Regexp.timeout = 0.001
+    out = StringIO.new
+    err = StringIO.new
+    input = Rjq::JSON::Dumper.dump(('a' * 30_000) + '!', indent: nil)
+    code = described_class.new(['-c', 'test("\\\\A(a|aa)*\\\\z")'], stdin: StringIO.new(input),
+                                                                 stdout: out, stderr: err).run
+
+    expect(code).to eq(5)
+    expect(out.string).to eq('')
+    expect(err.string).to eq("rjq: runtime error: regular expression match timeout\n")
+  ensure
+    Regexp.timeout = previous_timeout if defined?(previous_timeout) && Regexp.respond_to?(:timeout=)
+  end
+
   it 'uses halt statuses and does not let try catch halt' do
     code = described_class.new(['-n', 'try halt catch "caught"'], stdin: StringIO.new, stdout: StringIO.new,
                                                                stderr: StringIO.new).run

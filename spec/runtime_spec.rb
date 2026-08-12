@@ -321,6 +321,30 @@ RSpec.describe Rjq do
       .to eq([["", "💩", "é", ""]])
   end
 
+  it 'does not repair malformed regular expression groups' do
+    ['(', '(?<x>', '(?m'].product(%w[ m s p]).each do |pattern, flags|
+      filter = '"a" | test($pattern; $flags)'
+      expect { described_class.run(filter, nil, variables: { 'pattern' => pattern, 'flags' => flags }).to_a }
+        .to raise_error(Rjq::RuntimeError, /regexp|group|end pattern|option/i)
+    end
+  end
+
+  it 'converts regular expression timeouts into runtime errors' do
+    skip 'per-expression regexp timeouts are unavailable' unless Regexp.respond_to?(:timeout)
+
+    input = ('a' * 30_000) + '!'
+    pattern = '\\A(a|aa)*\\z'
+    filters = [
+      'test($pattern)', 'match($pattern)', 'capture($pattern)', 'scan($pattern)',
+      'split($pattern; "")', 'splits($pattern)', 'sub($pattern; "x")', 'gsub($pattern; "x")'
+    ]
+    filters.each do |filter|
+      expect do
+        described_class.run(filter, input, variables: { 'pattern' => pattern }, regexp_timeout: 0.001).to_a
+      end.to raise_error(Rjq::RuntimeError, 'regular expression match timeout')
+    end
+  end
+
   it 'matches jq integer remainder and empty string division semantics' do
     filter = '[1.5%1, (-1.5)%1, 5.9%2.1, (-5.9)%2.1, 0.1%(-2), (-0.1)%2]'
     expect(described_class.run(filter, nil).to_a).to eq([[0, 0, 1, -1, 0, 0]])

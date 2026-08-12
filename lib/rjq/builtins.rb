@@ -383,6 +383,10 @@ module Rjq
       else
         raise CompileError, "#{name}/#{args.length} is not defined"
       end
+    rescue RegexpError => e
+      raise unless defined?(Regexp::TimeoutError) && e.is_a?(Regexp::TimeoutError)
+
+      raise Rjq::RuntimeError, 'regular expression match timeout'
     end
 
     def length(value)
@@ -1383,23 +1387,28 @@ module Rjq
           enabled, disabled, body_index = inline
           child_line_anchors = option_state(line_anchors, enabled, disabled, 'm')
           child_dot_matches_newline = option_state(dot_matches_newline, enabled, disabled, 's')
-          body, next_index = transform_regexp_segment(
+          body, next_index, closed = transform_regexp_segment(
             chars, body_index, line_anchors: child_line_anchors,
                                dot_matches_newline: child_dot_matches_newline, stop_at_group_end: true
           )
-          output << ruby_regexp_group(enabled, disabled, dot_matches_newline, child_dot_matches_newline, body)
+          output << if closed
+                      ruby_regexp_group(enabled, disabled, dot_matches_newline, child_dot_matches_newline, body)
+                    else
+                      chars[index...body_index].join + body
+                    end
           index = next_index
           next
         elsif char == '('
-          body, next_index = transform_regexp_segment(
+          body, next_index, closed = transform_regexp_segment(
             chars, index + 1, line_anchors: line_anchors,
                               dot_matches_newline: dot_matches_newline, stop_at_group_end: true
           )
-          output << "(#{body})"
+          output << "(#{body}"
+          output << ')' if closed
           index = next_index
           next
         elsif char == ')' && stop_at_group_end
-          return [output, index + 1]
+          return [output, index + 1, true]
         elsif char == '^'
           output << (line_anchors ? '^' : '\\A')
         elsif char == '$'
@@ -1409,7 +1418,7 @@ module Rjq
         end
         index += 1
       end
-      [output, index]
+      [output, index, !stop_at_group_end]
     end
 
     def consume_regexp_character_class(chars, index)
