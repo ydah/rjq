@@ -74,9 +74,11 @@ module Rjq
       case parent
       when Array
         raise TypeError, cannot_index_message(parent, key) unless key.is_a?(Numeric)
-        return value if key.respond_to?(:nan?) && key.nan?
+        return value if key.respond_to?(:finite?) && !key.finite?
 
-        key = key.floor
+        key = key.to_i
+        return value if key.zero? && path.last.negative?
+
         key = parent.length + key if key.negative?
         parent.delete_at(key) unless key.negative?
       when Hash
@@ -161,7 +163,7 @@ module Rjq
       raise TypeError, 'Cannot set array element at NaN index' if key.respond_to?(:nan?) && key.nan?
       raise TypeError, 'Cannot set array element at non-finite index' if key.respond_to?(:finite?) && !key.finite?
 
-      key = key.floor
+      key = key.to_i
       return key unless key.negative?
 
       normalized = parent.length + key
@@ -174,7 +176,7 @@ module Rjq
     def read_array(array, key)
       return nil if (key.respond_to?(:nan?) && key.nan?) || (key.respond_to?(:finite?) && !key.finite?)
 
-      index = key.floor
+      index = key.to_i
       index = array.length + index if index.negative?
       index.negative? ? nil : array[index]
     end
@@ -229,9 +231,10 @@ module Rjq
     def slice_boundary(value, length, rounding, default)
       return default if value.nil? || (value.respond_to?(:nan?) && value.nan?)
       raise TypeError, 'slice index must be a number' unless value.is_a?(Numeric)
+      return value.positive? ? length : 0 if value.respond_to?(:finite?) && !value.finite?
 
       index = rounding == :ceil ? value.ceil : value.floor
-      index = length + index if index.negative?
+      index = length + index if value.negative?
       [[index, 0].max, length].min
     end
     private_class_method :slice_boundary

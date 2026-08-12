@@ -1462,9 +1462,9 @@ module Rjq
     def normalize_boundary(index, length, rounding)
       raise TypeError, 'slice index must be a number' unless index.is_a?(Numeric)
 
-      index = rounding == :ceil ? index.ceil : index.floor
+      rounded = rounding == :ceil ? index.ceil : index.floor
 
-      normalized = index.negative? ? length + index : index
+      normalized = index.negative? ? length + rounded : rounded
       [[normalized, 0].max, length].min
     end
 

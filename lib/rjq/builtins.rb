@@ -429,7 +429,10 @@ module Rjq
           raise TypeError, "Cannot check whether array has a #{Value.type_of(key)} key"
         end
 
-        key.finite? && key >= 0 && key.floor < container.length
+        return false unless key.finite?
+
+        index = key.to_i
+        index >= 0 && index < container.length
       when Hash
         unless key.is_a?(String)
           raise TypeError, "Cannot check whether object has a #{Value.type_of(key)} key"
@@ -1223,12 +1226,13 @@ module Rjq
 
     def index_of(input, needle)
       if input.is_a?(String)
-        return nil if assert_string(needle).empty?
+        validate_string_search_needle(input, needle)
+        return nil if needle.empty?
 
-        return input.index(assert_string(needle))
+        return input.index(needle)
       end
 
-      return unless input.is_a?(Array)
+      return unsupported_search_result(input, needle) unless input.is_a?(Array)
 
       needle = [needle] unless needle.is_a?(Array)
       max = input.length - assert_array(needle).length
@@ -1237,12 +1241,13 @@ module Rjq
 
     def rindex_of(input, needle)
       if input.is_a?(String)
-        return nil if assert_string(needle).empty?
+        validate_string_search_needle(input, needle)
+        return nil if needle.empty?
 
-        return input.rindex(assert_string(needle))
+        return input.rindex(needle)
       end
 
-      return unless input.is_a?(Array)
+      return unsupported_search_result(input, needle) unless input.is_a?(Array)
 
       needle = [needle] unless needle.is_a?(Array)
       max = input.length - assert_array(needle).length
@@ -1253,7 +1258,7 @@ module Rjq
       if input.is_a?(String)
         positions = []
         offset = 0
-        needle = assert_string(needle)
+        validate_string_search_needle(input, needle)
         return [] if needle.empty?
 
         while (found = input.index(needle, offset))
@@ -1262,9 +1267,33 @@ module Rjq
         end
         return positions
       end
+      return unsupported_search_result(input, needle) unless input.is_a?(Array)
+
       needle = [needle] unless needle.is_a?(Array)
       max = input.length - needle.length
       (0..max).select { |index| array_slice_equal?(input, needle, index) }
+    end
+
+    def validate_string_search_needle(input, needle)
+      return if needle.is_a?(String)
+      raise TypeError, 'Array/string slice indices must be integers' if needle.is_a?(Hash)
+
+      Path.read_index(input, needle)
+    end
+
+    def unsupported_search_result(input, needle)
+      if input.is_a?(Hash)
+        Path.read_index(input, needle) unless needle.is_a?(String)
+        return nil
+      end
+      if input.nil?
+        return nil if needle.is_a?(String) || needle.is_a?(Numeric) || needle.is_a?(Hash)
+
+        Path.read_index(input, needle)
+      end
+
+      Path.read_index(input, needle)
+      nil
     end
 
     def array_slice_equal?(input, needle, index)
@@ -1273,7 +1302,7 @@ module Rjq
 
     def combinations(input, context, args)
       if args.length == 1 && eval_arg(args, 0, input, context).is_a?(Numeric)
-        count = eval_arg(args, 0, input, context).to_i
+        count = numeric(eval_arg(args, 0, input, context)).ceil
         return [[]] if count.negative?
 
         arrays = Array.new(count) { assert_array(input) }

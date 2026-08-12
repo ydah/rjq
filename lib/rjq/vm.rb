@@ -1281,7 +1281,7 @@ module Rjq
       raise TypeError, 'slice index must be a number' unless index.is_a?(Numeric)
 
       rounded = rounding == :ceil ? index.ceil : index.floor
-      normalized = rounded.negative? ? length + rounded : rounded
+      normalized = index.negative? ? length + rounded : rounded
       [[normalized, 0].max, length].min
     end
 

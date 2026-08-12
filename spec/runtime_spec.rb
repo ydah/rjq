@@ -1159,6 +1159,13 @@ RSpec.describe Rjq do
       described_class.run('index((1,error("late")))', [1, 2]).each { |value| index_outputs << value }
     end.to raise_error(Rjq::ErrorValue, 'late')
     expect(index_outputs).to eq([0])
+
+    %w[index rindex indices].each do |name|
+      expect { described_class.run("#{name}({})", {}).to_a }
+        .to raise_error(Rjq::TypeError, 'Cannot index object with object')
+      expect { described_class.run("#{name}(1)", 1).to_a }
+        .to raise_error(Rjq::TypeError, 'Cannot index number with number')
+    end
   end
 
   it 'preserves jq-defined builtin argument order and input effects' do
@@ -1198,6 +1205,18 @@ RSpec.describe Rjq do
       .to raise_error(Rjq::TypeError, 'Cannot index null with boolean')
     expect { described_class.run('has([])', {}).to_a }
       .to raise_error(Rjq::TypeError, 'Cannot check whether object has a array key')
+    expect(described_class.run('[has(-0.1),has(-0.9),has(-1),has(-1.1),has(1.1)]', [0, 1]).to_a)
+      .to eq([[true, true, false, false, true]])
+    expect(described_class.run('[getpath([-0.1]),getpath([-1.1])]', [0, 1, 2]).to_a)
+      .to eq([[0, 2]])
+    expect(described_class.run('[setpath([-0.1];9),setpath([-1.1];9)]', [0, 1, 2]).to_a)
+      .to eq([[[9, 1, 2], [0, 1, 9]]])
+    expect(described_class.run('[delpaths([[-0.1]]),delpaths([[-1.1]]),delpaths([[1.9]])]', [0, 1, 2]).to_a)
+      .to eq([[[0, 1, 2], [0, 1], [0, 2]]])
+    expect(described_class.run('[.[0:-0.1],.[-0.1:-0.1]]', [0, 1, 2]).to_a)
+      .to eq([[[0, 1, 2], [2]]])
+    expect(described_class.run('[combinations(0.1), combinations(1.9), combinations(-0.1)]', [1, 2]).to_a)
+      .to eq([[[1], [2], [1, 1], [1, 2], [2, 1], [2, 2], []]])
 
     deep = 20_000.times.reduce(1) { |value, _| [value] }
     expect(described_class.run('flatten', deep).to_a).to eq([[1]])
