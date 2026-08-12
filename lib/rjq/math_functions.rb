@@ -58,7 +58,14 @@ module Rjq
     end
 
     def scalbln(value, exponent)
-      integral_exponent = c_long_exponent(exponent.to_f)
+      exponent = exponent.to_f
+      if RUBY_PLATFORM.include?('linux') && !exponent.finite?
+        # jq's Linux build passes non-finite values through a C long
+        # conversion, which yields zero on the supported libc targets.
+        return 0.0
+      end
+
+      integral_exponent = c_long_exponent(exponent)
       library = native_library(:scalbln)
       if library
         result = library.scalbln(value.to_f, integral_exponent)

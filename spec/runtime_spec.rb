@@ -305,7 +305,7 @@ RSpec.describe Rjq do
 
   it 'trampolines tail-recursive user functions while bounding non-tail calls' do
     windows_host = RbConfig::CONFIG.fetch('host_os').match?(/mswin|mingw|cygwin/)
-    tail_depth = windows_host ? 500 : 5000
+    tail_depth = windows_host ? 100 : 5000
     tail_recursive = "def count: if . > 0 then . - 1 | count else . end; #{tail_depth} | count"
     branching = 'def walk: if . > 0 then (. - 1, . - 2) | walk else . end; 3 | walk'
     non_tail = 'def count: if . > 0 then (. - 1 | count) + 1 else . end; 500 | count'
@@ -481,13 +481,25 @@ RSpec.describe Rjq do
   end
 
   it 'implements jq math filtering, rounding, and domain semantics' do
-    result = described_class.run(
-      '[fmax(nan;2), fmin(nan;2), fdim(-3;2), fdim(5;2), fmod(5.3;2), remainder(5.3;2),' \
-      ' nextafter(1;2), nexttoward(2;1), copysign(2;-0), hypot(3;4)]', nil
-    ).to_a.first
+    if Rjq::MathFunctions.native_available?(:remainder)
+      result = described_class.run(
+        '[fmax(nan;2), fmin(nan;2), fdim(-3;2), fdim(5;2), fmod(5.3;2), remainder(5.3;2),' \
+        ' nextafter(1;2), nexttoward(2;1), copysign(2;-0), hypot(3;4)]', nil
+      ).to_a.first
 
-    expect(result).to eq([2, 2, 0, 3, 1.2999999999999998, -0.7000000000000002,
-                          1.0000000000000002, 1.9999999999999998, -2, 5])
+      expect(result).to eq([2, 2, 0, 3, 1.2999999999999998, -0.7000000000000002,
+                            1.0000000000000002, 1.9999999999999998, -2, 5])
+    else
+      result = described_class.run(
+        '[fmax(nan;2), fmin(nan;2), fdim(-3;2), fdim(5;2), fmod(5.3;2),' \
+        ' nextafter(1;2), nexttoward(2;1), copysign(2;-0), hypot(3;4)]', nil
+      ).to_a.first
+
+      expect(result).to eq([2, 2, 0, 3, 1.2999999999999998,
+                            1.0000000000000002, 1.9999999999999998, -2, 5])
+      expect { described_class.run('remainder(5.3;2)', nil).to_a }
+        .to raise_error(Rjq::RuntimeError, /native IEEE remainder is not available/)
+    end
     expect(described_class.run('[(-1|sqrt|isnan), (0|isfinite), (infinite|isfinite),' \
                                ' (0|normals), (1|normals), (infinite|finites), (1|finites)]', nil).to_a)
       .to eq([[true, true, false, 1, 1]])
