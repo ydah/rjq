@@ -25,7 +25,7 @@ The fixture source tag and file checksums are recorded in `spec/fixtures/jq/mani
 - This is not libjq and does not claim complete source, diagnostic-text, regex-engine, module-layout, or performance compatibility.
 - Regex flag `l`, Unicode offsets, and advanced engine constructs can differ because Ruby Regexp is not jq's bundled Oniguruma build. In particular, zero-width matches on multibyte UTF-8 strings advance by codepoint in rjq and by byte in jq, so `split/2` can contain a different number of empty fields.
 - Ruby Regexp rejects some variable-length lookbehind expressions that jq's Oniguruma accepts. These remain controlled regular-expression errors rather than loading a second native regex engine.
-- On platforms without a native `fma` symbol, `fma/3` uses a non-fused multiply followed by add. Other native math functions have Ruby fallbacks, but extreme platform-specific results can differ.
+- On platforms without native `fma`, `scalb`, or `scalbln` symbols, the corresponding builtin raises a controlled runtime error instead of silently returning a non-fused or otherwise incompatible approximation. IEEE remainder retains a verified Ruby fallback.
 - rjq extensions include `@base32`, `@base32d`, `dateadd`, `datesub`, `ascii`, `to_number`, and compatibility aliases such as `leaf_paths`.
 - `get_jq_origin` reports the rjq installation root. Default module search paths are rjq's actual expanded paths, not jq's symbolic `$ORIGIN` entries.
 - JSON object keys supplied through the Ruby API must be strings. Cyclic Ruby arrays and hashes are rejected.

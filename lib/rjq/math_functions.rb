@@ -31,7 +31,7 @@ module Rjq
       library = native_library(:fma)
       return library.fma(left.to_f, right.to_f, addend.to_f) if library
 
-      (left * right) + addend
+      raise Rjq::RuntimeError, 'native fused multiply-add is not available on this platform'
     end
 
     def remainder(left, right)
@@ -45,7 +45,7 @@ module Rjq
       library = native_library(:scalb)
       return library.scalb(value.to_f, exponent.to_f) if library
 
-      portable_scalb(value.to_f, exponent.to_f)
+      raise Rjq::RuntimeError, 'native scalb is not available on this platform'
     end
 
     def scalbln(value, exponent)
@@ -53,9 +53,7 @@ module Rjq
       library = native_library(:scalbln)
       return library.scalbln(value.to_f, integral_exponent) if library
 
-      Math.ldexp(value.to_f, integral_exponent)
-    rescue RangeError
-      integral_exponent.negative? ? copy_zero_sign(value) : copy_infinity_sign(value)
+      raise Rjq::RuntimeError, 'native scalbln is not available on this platform'
     end
 
     def native_available?(name)
@@ -92,14 +90,6 @@ module Rjq
       result.zero? && left.negative? ? -0.0 : result
     end
 
-    def portable_scalb(value, exponent)
-      return Float::NAN if exponent.nan?
-
-      Math.ldexp(value, c_long_exponent(exponent))
-    rescue RangeError
-      exponent.negative? ? copy_zero_sign(value) : copy_infinity_sign(value)
-    end
-
     def c_long_exponent(value)
       bits = Fiddle::SIZEOF_LONG * 8
       minimum = -(1 << (bits - 1))
@@ -108,14 +98,6 @@ module Rjq
       return value.positive? ? maximum : minimum if value.infinite?
 
       [[value.to_i, minimum].max, maximum].min
-    end
-
-    def copy_zero_sign(value)
-      value.negative? ? -0.0 : 0.0
-    end
-
-    def copy_infinity_sign(value)
-      value.negative? ? -Float::INFINITY : Float::INFINITY
     end
 
     def bessel_library

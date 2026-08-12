@@ -256,6 +256,24 @@ RSpec.describe Rjq do
     expect(scaling[4..]).to eq([Float::INFINITY, 0, 2, Float::INFINITY, 0])
   end
 
+  it 'fails explicitly when exact native math operations are unavailable' do
+    allow(Rjq::MathFunctions).to receive(:native_library).and_call_original
+    allow(Rjq::MathFunctions).to receive(:native_library).with(:fma).and_return(nil)
+    expect { described_class.run('fma(2;3;4)', nil).to_a }
+      .to raise_error(Rjq::RuntimeError, /native fused multiply-add is not available/)
+
+    allow(Rjq::MathFunctions).to receive(:native_library).with(:scalb).and_return(nil)
+    expect { described_class.run('scalb(2;3)', nil).to_a }
+      .to raise_error(Rjq::RuntimeError, /native scalb is not available/)
+
+    allow(Rjq::MathFunctions).to receive(:native_library).with(:scalbln).and_return(nil)
+    expect { described_class.run('scalbln(2;3)', nil).to_a }
+      .to raise_error(Rjq::RuntimeError, /native scalbln is not available/)
+
+    allow(Rjq::MathFunctions).to receive(:native_library).with(:remainder).and_return(nil)
+    expect(described_class.run('drem(5.3;2)', nil).to_a).to eq([-0.7000000000000002])
+  end
+
   it 'keeps date conversion independent of the host timezone' do
     expect(described_class.run('[0 | gmtime | mktime]', nil).to_a).to eq([[0]])
     expect(described_class.run('"2015-03-05T23:51:47Z" | strptime("%Y-%m-%dT%H:%M:%SZ")', nil).to_a)
