@@ -1377,7 +1377,10 @@ module Rjq
     end
 
     def modulemeta(input, context)
-      context.options.fetch(:module_metadata, {}).fetch(input, { 'whatever' => nil, 'deps' => [], 'defs' => [] })
+      metadata = context.options.fetch(:module_metadata, {})
+      raise RuntimeError, "module not found: #{input}" unless metadata.key?(input)
+
+      metadata.fetch(input)
     end
 
     def assert_array(value)

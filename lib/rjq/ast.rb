@@ -67,11 +67,12 @@ module Rjq
     end
 
     class Program < Node
-      attr_reader :body, :definitions
+      attr_reader :body, :definitions, :directives
 
-      def initialize(body, definitions = [])
+      def initialize(body, definitions = [], directives = [])
         @body = body
         @definitions = definitions
+        @directives = directives
       end
 
       def eval(input, context)
@@ -96,6 +97,8 @@ module Rjq
         end
       end
     end
+
+    ModuleDirective = Struct.new(:type, :name, :metadata, :alias_name, keyword_init: true)
 
     class FunctionDefinition
       attr_reader :name, :params, :body, :closure

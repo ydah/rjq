@@ -6,6 +6,7 @@ RSpec.describe Rjq::Lexer do
   it 'tokenizes common jq syntax' do
     tokens = described_class.new('.foo[] | select(. > 1)').tokenize
     expect(tokens.map(&:type)).to include(:dot, :identifier, :lbracket, :rbracket, :pipe)
+    expect(tokens.first).to have_attributes(start_offset: 0, end_offset: 1, filename: '<top-level>')
   end
 
   it 'keeps interpolated string segments' do

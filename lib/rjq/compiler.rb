@@ -27,14 +27,15 @@ module Rjq
       @constants = []
     end
 
-    def compile(ast, module_metadata: {})
+    def compile(ast, module_metadata: {}, module_variables: {})
       instructions = compile_node(ast.body)
       Rjq::Program.new(
         instructions: instructions,
         constants: @constants,
         subroutines: {},
         definitions: ast.definitions.map { |definition| compile_definition(definition) },
-        module_metadata: module_metadata
+        module_metadata: module_metadata,
+        module_variables: module_variables
       )
     end
 
@@ -246,386 +247,27 @@ module Rjq
     end
 
     def compile(filter_string)
-      @module_metadata = fixture_module_metadata
-      ast = Parser.new(expand_modules(filter_string), allow_comments: @opts.fetch(:allow_comments, true)).parse
-      program = BytecodeCompiler.new.compile(ast, module_metadata: @module_metadata)
+      source_path = @opts[:source_path] || '<top-level>'
+      parsed = Parser.new(filter_string, allow_comments: @opts.fetch(:allow_comments, true),
+                                         source_name: source_path).parse
+      resolver = @opts[:module_resolver] || default_module_resolver
+      loaded = ModuleLoader.new(resolver).load(parsed, source_path: @opts[:source_path])
+      ast = loaded.program
+      program = BytecodeCompiler.new.compile(
+        ast,
+        module_metadata: loaded.metadata,
+        module_variables: loaded.variables
+      )
       SemanticAnalyzer.new(program).validate!
       CompiledProgram.new(ast, program: program)
-    rescue ParseError
-      raise
-    rescue StandardError => e
-      raise CompileError, e.message
     end
 
     private
 
-    def expand_modules(source, seen = [])
-      source = source.to_s
-      validate_module_declarations(source)
-      validate_module_directives(source)
-      expanded = rewrite_code(strip_module_declarations(source), /\$(\w+)::/, '\1::')
-      replace_module_directives(expanded) do |entry|
-        directive = entry.fetch(:directive)
-        name = entry.fetch(:name)
-        alias_name = entry[:alias]
-        path = Modules.new(@opts.fetch(:library_path, [])).resolve(name)
-        alias_source = nil
-        content =
-          if path
-            raise CompileError, "circular module import: #{name}" if seen.include?(path)
-
-            raw_content = File.read(path)
-            alias_source = raw_content
-            register_module_metadata(name, raw_content)
-            expand_modules(raw_content, seen + [path])
-          else
-            alias_source = fixture_module(name)
-            register_module_metadata(name, alias_source)
-            alias_source
-          end
-        if directive == 'import' && alias_name&.start_with?('$')
-          variable = alias_name.delete_prefix('$')
-          "#{content}\ndef #{variable}::#{variable}: #{fixture_data(name)};\n#{fixture_data(name)} as $#{variable} |"
-        elsif directive == 'import' && alias_name
-          "#{content}\n#{module_aliases(alias_source, alias_name)}"
-        else
-          content
-        end
-      end
+    def default_module_resolver
+      paths = @opts.fetch(:library_path, [])
+      ModuleResolver.new(paths: paths, use_default_paths: paths.empty?)
     end
 
-    def validate_module_declarations(source)
-      module_keyword_entries(source, ['module']).each do |entry|
-        cursor = skip_layout(source, entry.fetch(:keyword_finish))
-        raise CompileError, 'Module metadata must be constant' if source[cursor] == '('
-        raise CompileError, 'Module metadata must be an object' unless source[cursor] == '{'
-
-        _metadata, cursor = read_balanced(source, cursor)
-        cursor = skip_layout(source, cursor)
-        raise CompileError, 'module declaration must be terminated by semicolon' unless source[cursor] == ';'
-      end
-    end
-
-    def validate_module_directives(source)
-      module_keyword_entries(source, %w[include import]).each do |entry|
-        cursor = skip_layout(source, entry.fetch(:keyword_finish))
-        raise CompileError, "#{entry.fetch(:keyword)} requires a string module name" unless source[cursor] == '"'
-
-        _name, cursor = read_quoted_string(source, cursor)
-        cursor = skip_layout(source, cursor)
-        raise CompileError, 'Module metadata must be constant' if source[cursor] == '('
-        raise CompileError, 'Module metadata must be an object' if source[cursor] == '['
-        read_module_directive(source, entry)
-      end
-    end
-
-    def replace_module_directives(source)
-      output = +''
-      offset = 0
-      module_directives(source).each do |entry|
-        output << source[offset...entry.fetch(:start)]
-        output << yield(entry)
-        offset = entry.fetch(:finish)
-      end
-      output << source[offset..].to_s
-    end
-
-    def strip_module_declarations(source)
-      output = source.dup
-      module_declaration_ranges(source).reverse_each { |range| output[range] = '' }
-      output
-    end
-
-    def module_declaration_ranges(source)
-      module_keyword_entries(source, ['module']).map do |entry|
-        cursor = skip_layout(source, entry.fetch(:keyword_finish))
-        _object_source, cursor = read_balanced(source, cursor)
-        cursor = skip_layout(source, cursor)
-        entry.fetch(:start)...(cursor + 1)
-      end
-    end
-
-    def module_directives(source)
-      module_keyword_entries(source, %w[include import]).map { |entry| read_module_directive(source, entry) }
-    end
-
-    def read_module_directive(source, keyword_entry)
-      cursor = skip_layout(source, keyword_entry.fetch(:keyword_finish))
-      unless source[cursor] == '"'
-        raise CompileError, "#{keyword_entry.fetch(:keyword)} requires a string module name"
-      end
-
-      name, cursor = read_quoted_string(source, cursor)
-      metadata_source = nil
-      alias_name = nil
-      loop do
-        cursor = skip_layout(source, cursor)
-        if metadata_source.nil? && source[cursor] == '{'
-          metadata_source, cursor = read_balanced(source, cursor)
-        elsif alias_name.nil? && source[cursor..]&.match?(/\Aas\b/)
-          alias_name, cursor = read_module_alias(source, cursor + 2)
-        else
-          break
-        end
-      end
-      cursor = skip_layout(source, cursor)
-      unless source[cursor] == ';'
-        raise CompileError, "#{keyword_entry.fetch(:keyword)} directive must be terminated by semicolon"
-      end
-
-      {
-        start: keyword_entry.fetch(:start),
-        finish: cursor + 1,
-        directive: keyword_entry.fetch(:keyword),
-        name: name,
-        metadata: metadata_source,
-        alias: alias_name
-      }
-    end
-
-    def read_module_alias(source, cursor)
-      cursor = skip_layout(source, cursor)
-      match = source[cursor..].match(/\A\$?[A-Za-z_][A-Za-z0-9_]*/)
-      raise CompileError, 'invalid module alias' unless match
-
-      [match[0], cursor + match[0].length]
-    end
-
-    def read_balanced(source, cursor)
-      pairs = { '{' => '}', '[' => ']', '(' => ')' }
-      stack = [pairs.fetch(source[cursor])]
-      start = cursor
-      cursor += 1
-      while cursor < source.length
-        char = source[cursor]
-        if char == '"'
-          cursor = quoted_string_end(source, cursor)
-        elsif char == '#'
-          cursor += 1
-          cursor += 1 while cursor < source.length && source[cursor] != "\n"
-        elsif pairs.key?(char)
-          stack << pairs.fetch(char)
-          cursor += 1
-        elsif char == stack.last
-          stack.pop
-          cursor += 1
-          return [source[start...cursor], cursor] if stack.empty?
-        else
-          cursor += 1
-        end
-      end
-      raise CompileError, 'unterminated module metadata'
-    end
-
-    def read_quoted_string(source, cursor)
-      finish = quoted_string_end(source, cursor)
-      raw = source[cursor...finish]
-      [JSON::Parser.parse_one(raw), finish]
-    rescue JSONParseError
-      [raw[1...-1], finish]
-    end
-
-    def quoted_string_end(source, cursor)
-      cursor += 1
-      escaped = false
-      while cursor < source.length
-        char = source[cursor]
-        if escaped
-          escaped = false
-        elsif char == '\\'
-          escaped = true
-        elsif char == '"'
-          return cursor + 1
-        end
-        cursor += 1
-      end
-      raise CompileError, 'unterminated string'
-    end
-
-    def skip_whitespace(source, cursor)
-      skip_layout(source, cursor)
-    end
-
-    def skip_layout(source, cursor)
-      loop do
-        cursor += 1 while cursor < source.length && source[cursor].match?(/\s/)
-        break unless source[cursor] == '#'
-
-        cursor += 1 while cursor < source.length && source[cursor] != "\n"
-      end
-      cursor
-    end
-
-    def module_keyword_entries(source, keywords)
-      regions = lexical_regions(source)
-      pattern = /\b(?:#{Regexp.union(keywords).source})\b/
-      source.to_enum(:scan, pattern).filter_map do
-        match = Regexp.last_match
-        next unless (match.begin(0)...match.end(0)).all? { |index| regions[index] == :code }
-        next unless directive_boundary?(source, regions, match.begin(0))
-
-        { start: match.begin(0), keyword_finish: match.end(0), keyword: match[0] }
-      end
-    end
-
-    def directive_boundary?(source, regions, start)
-      cursor = start - 1
-      while cursor >= 0
-        if regions[cursor] == :comment || source[cursor].match?(/\s/)
-          cursor -= 1
-          next
-        end
-        return source[cursor] == ';'
-      end
-      true
-    end
-
-    def rewrite_code(source, pattern, replacement)
-      regions = lexical_regions(source)
-      source.gsub(pattern) do |matched|
-        match = Regexp.last_match
-        if (match.begin(0)...match.end(0)).all? { |index| regions[index] == :code }
-          matched.sub(pattern, replacement)
-        else
-          matched
-        end
-      end
-    end
-
-    def lexical_regions(source)
-      regions = Array.new(source.length, :code)
-      state = :code
-      escaped = false
-      source.each_char.with_index do |char, index|
-        case state
-        when :string
-          regions[index] = :string
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == '"'
-            state = :code
-          end
-        when :comment
-          regions[index] = :comment
-          state = :code if char == "\n"
-        else
-          if char == '"'
-            regions[index] = :string
-            state = :string
-          elsif char == '#'
-            regions[index] = :comment
-            state = :comment
-          end
-        end
-      end
-      regions
-    end
-
-    def fixture_module(name)
-      case name
-      when 'a'
-        'def a: "a";'
-      when 'b'
-        'def a: "b"; def b: "c";'
-      when 'c'
-        'def a: 0; def c: "acmehbah";'
-      when 'shadow1'
-        'def e: 2;'
-      when 'shadow2'
-        'def e: 3;'
-      when 'test_bind_order'
-        'def check: true;'
-      when 'data'
-        "def d: #{fixture_data(name)};"
-      else
-        raise CompileError, "module #{name.inspect} not found"
-      end
-    end
-
-    def fixture_data(name)
-      return 'null' unless name == 'data'
-
-      '[{"this":"is a test","that":"is too"}]'
-    end
-
-    def register_module_metadata(name, content)
-      @module_metadata[name] = metadata_for(content)
-    end
-
-    def metadata_for(content)
-      module_object = parse_module_object(content)
-      module_object.merge(
-        'deps' => dependency_metadata(content),
-        'defs' => definition_metadata(content)
-      )
-    end
-
-    def parse_module_object(content)
-      source = module_declaration_ranges(content).filter_map do |range|
-        cursor = skip_whitespace(content, range.begin + 'module'.length)
-        read_balanced(content, cursor).first
-      end.first
-      return { 'whatever' => nil } unless source
-
-      object = Parser.new(source).parse.body.eval(nil, AST::Context.new).first
-      object.is_a?(Hash) ? object : { 'whatever' => nil }
-    rescue Rjq::Error
-      { 'whatever' => nil }
-    end
-
-    def dependency_metadata(content)
-      module_directives(content).map do |directive_entry|
-        directive = directive_entry.fetch(:directive)
-        relpath = directive_entry.fetch(:name)
-        alias_name = directive_entry[:alias]
-        metadata_source = directive_entry[:metadata]
-        metadata = { 'is_data' => alias_name&.start_with?('$') || false, 'relpath' => relpath }
-        metadata.merge!(dependency_options(metadata_source)) if metadata_source
-        metadata['as'] = alias_name.delete_prefix('$') if alias_name
-        metadata['as'] ||= File.basename(relpath) if directive == 'include'
-        metadata
-      end
-    end
-
-    def dependency_options(source)
-      object = Parser.new(source).parse.body.eval(nil, AST::Context.new).first
-      object.is_a?(Hash) ? object : {}
-    rescue Rjq::Error
-      {}
-    end
-
-    def definition_metadata(content)
-      Parser.new(content).parse.definitions.map { |definition| "#{definition.name}/#{definition.params.length}" }
-    end
-
-    def fixture_module_metadata
-      {
-        'c' => {
-          'whatever' => nil,
-          'deps' => [
-            { 'as' => 'foo', 'is_data' => false, 'relpath' => 'a' },
-            { 'search' => './', 'as' => 'd', 'is_data' => false, 'relpath' => 'd' },
-            { 'search' => './', 'as' => 'd2', 'is_data' => false, 'relpath' => 'd' },
-            { 'search' => './../lib/jq', 'as' => 'e', 'is_data' => false, 'relpath' => 'e' },
-            { 'search' => './../lib/jq', 'as' => 'f', 'is_data' => false, 'relpath' => 'f' },
-            { 'as' => 'd', 'is_data' => true, 'relpath' => 'data' }
-          ],
-          'defs' => ['a/0', 'c/0']
-        }
-      }
-    end
-
-    def module_aliases(content, alias_name)
-      Parser.new(content).parse.definitions.reject { |definition| definition.name.include?('::') }.map do |definition|
-        if definition.params.empty?
-          "def #{alias_name}::#{definition.name}: #{definition.name};"
-        else
-          params = definition.params.join('; ')
-          "def #{alias_name}::#{definition.name}(#{params}): #{definition.name}(#{params});"
-        end
-      end.join("\n")
-    end
   end
 end

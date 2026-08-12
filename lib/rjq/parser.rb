@@ -34,24 +34,77 @@ module Rjq
       '%' => 10
     }.freeze
 
-    def initialize(source, allow_comments: true)
-      @tokens = source.is_a?(Array) ? source : Lexer.new(source, allow_comments: allow_comments).tokenize
+    def initialize(source, allow_comments: true, source_name: '<top-level>')
+      @tokens = if source.is_a?(Array)
+                  source
+                else
+                  Lexer.new(source, allow_comments: allow_comments, source_name: source_name).tokenize
+                end
       @index = 0
       @definitions = []
     end
 
     def parse
-      parse_directives
+      directives = parse_directives
       parse_definitions
       body = eof? ? AST::Identity.new : parse_expression
       expect(:eof)
-      AST::Program.new(body, @definitions)
+      AST::Program.new(body, @definitions, directives)
     end
 
     private
 
     def parse_directives
-      consume_until_semicolon while keyword?('include') || keyword?('import') || keyword?('module')
+      directives = []
+      while keyword?('include') || keyword?('import') || keyword?('module')
+        directives << parse_directive
+      end
+      directives
+    end
+
+    def parse_directive
+      type = consume.value.to_sym
+      if type == :module
+        metadata = parse_directive_metadata
+        expect(:semicolon)
+        return AST::ModuleDirective.new(type: type, metadata: metadata)
+      end
+
+      path = expect(:string).value
+      raise error('Import path must be constant') unless path.is_a?(String)
+
+      metadata = parse_directive_metadata unless %i[semicolon eof].include?(current.type) || keyword?('as')
+      alias_name = parse_module_alias if type == :import
+      expect(:semicolon)
+      AST::ModuleDirective.new(type: type, name: path, metadata: metadata, alias_name: alias_name)
+    end
+
+    def parse_directive_metadata
+      case current.type
+      when :lbrace
+        parse_object_literal
+      when :lbracket
+        parse_array_literal
+      when :lparen
+        consume
+        value = parse_expression_allowing_comma
+        expect(:rparen)
+        value
+      else
+        parse_prefix
+      end
+    end
+
+    def parse_module_alias
+      expect_keyword('as')
+      case current.type
+      when :identifier
+        consume.value
+      when :variable
+        "$#{consume.value}"
+      else
+        raise error('expected module alias')
+      end
     end
 
     def parse_definitions
@@ -208,7 +261,7 @@ module Rjq
         when :string
           AST::StringLiteral.new(consume.value)
         when :variable
-          AST::Variable.new(consume.value)
+          parse_variable
         when :identifier
           parse_identifier
         when :format
@@ -249,9 +302,23 @@ module Rjq
       AST::FunctionCall.new(name, [])
     end
 
+    def parse_variable
+      name = consume.value
+      return AST::Variable.new(name) unless current.type == :colon && @tokens[@index + 1]&.type == :colon
+
+      consume
+      consume
+      AST::FunctionCall.new("#{name}::#{parse_name}", current.type == :lparen ? parse_arguments_after_lparen : [])
+    end
+
+    def parse_arguments_after_lparen
+      expect(:lparen)
+      parse_arguments
+    end
+
     def parse_name
       name = expect(:identifier).value
-      if current.type == :colon && @tokens[@index + 1]&.type == :colon
+      while current.type == :colon && @tokens[@index + 1]&.type == :colon
         consume
         consume
         name = "#{name}::#{expect(:identifier).value}"
@@ -292,8 +359,7 @@ module Rjq
       when 'break'
         parse_break
       when 'include', 'import', 'module'
-        consume_until_semicolon
-        AST::Identity.new
+        raise error('module directives are only allowed before definitions and the filter body')
       when 'not'
         consume
         AST::FunctionCall.new('not', [])
@@ -652,7 +718,7 @@ module Rjq
     end
 
     def error(message)
-      ParseError.new("#{message} at line #{current.line}, column #{current.column}")
+      ParseError.new("#{message} at #{current.filename || '<top-level>'}, line #{current.line}, column #{current.column}")
     end
   end
 end

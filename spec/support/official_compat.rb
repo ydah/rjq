@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'stringio'
+require_relative 'fixture_module_resolver'
 
 module OfficialCompat
   module_function
@@ -55,7 +56,9 @@ module OfficialCompat
     inputs.flat_map do |value|
       output = []
       begin
-        Rjq.compile(program).run(value, stderr: stderr).each { |item| output << item }
+        Rjq.compile(program, module_resolver: fixture_module_resolver).run(value, stderr: stderr).each do |item|
+          output << item
+        end
       rescue Rjq::ErrorValue
         # jq's legacy fixture runner compares values emitted before a terminal
         # error. CLI status and diagnostics are covered by differential specs.
@@ -65,7 +68,7 @@ module OfficialCompat
   end
 
   def run_failure_case(program)
-    Rjq.compile(program).run(nil).to_a
+    Rjq.compile(program, module_resolver: fixture_module_resolver).run(nil).to_a
   end
 
   def expected_values(lines)
@@ -79,5 +82,9 @@ module OfficialCompat
 
   def dump_values(values)
     values.map { |value| Rjq::JSON::Dumper.dump(value, indent: nil) }
+  end
+
+  def fixture_module_resolver
+    @fixture_module_resolver ||= FixtureModuleResolver.new
   end
 end

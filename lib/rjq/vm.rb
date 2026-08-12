@@ -74,7 +74,7 @@ module Rjq
 
     def base_context
       AST::Context.new(
-        variables: @opts.fetch(:variables, {}),
+        variables: @program.program.module_variables.merge(@opts.fetch(:variables, {})),
         functions: {},
         options: @opts.merge(module_metadata: @program.program.module_metadata)
       )

@@ -45,14 +45,16 @@ module Rjq
   end
 
   class Program
-    attr_reader :instructions, :constants, :subroutines, :definitions, :module_metadata
+    attr_reader :instructions, :constants, :subroutines, :definitions, :module_metadata, :module_variables
 
-    def initialize(instructions:, constants: [], subroutines: {}, definitions: [], module_metadata: {})
+    def initialize(instructions:, constants: [], subroutines: {}, definitions: [], module_metadata: {},
+                   module_variables: {})
       @instructions = instructions
       @constants = constants
       @subroutines = subroutines
       @definitions = definitions
       @module_metadata = module_metadata
+      @module_variables = module_variables
     end
 
     def disasm

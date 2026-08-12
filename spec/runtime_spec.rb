@@ -56,9 +56,9 @@ RSpec.describe Rjq do
 
   it 'rejects malformed module directives instead of treating them as identity' do
     expect { described_class.compile('include 1; .') }
-      .to raise_error(Rjq::CompileError, /requires a string module name/)
+      .to raise_error(Rjq::ParseError, /expected string/)
     expect { described_class.compile('include "a"') }
-      .to raise_error(Rjq::CompileError, /terminated by semicolon/)
+      .to raise_error(Rjq::ParseError, /expected semicolon/)
   end
 
   it 'treats interpolated quoted fields as dynamic indices' do
@@ -232,9 +232,85 @@ RSpec.describe Rjq do
     end
   end
 
+  it 'does not expose compatibility fixture modules in the production resolver' do
+    expect { described_class.compile('include "a"; .', library_path: []) }
+      .to raise_error(Rjq::CompileError, /module "a" not found/)
+  end
+
+  it 'loads data modules as variables and namespaced functions' do
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, 'data.json'), '{"x":2}')
+
+      result = described_class.compile('import "data" as $d; [$d.x, $d::d.x]', library_path: [dir]).run(nil).to_a
+      expect(result).to eq([[2, 2]])
+    end
+  end
+
+  it 'resolves module dependencies relative to the importing module' do
+    Dir.mktmpdir do |dir|
+      nested = File.join(dir, 'nested')
+      Dir.mkdir(nested)
+      File.write(File.join(nested, 'dep.jq'), 'def value: 4;')
+      File.write(File.join(nested, 'math.jq'), 'include "dep"; def doubled: value * 2;')
+
+      program = described_class.compile('import "nested/math" as math; math::doubled', library_path: [dir])
+      expect(program.run(nil).to_a).to eq([8])
+    end
+  end
+
+  it 'rejects traversal and symlink escapes from module roots' do
+    Dir.mktmpdir do |parent|
+      root = File.join(parent, 'root')
+      outside = File.join(parent, 'outside')
+      Dir.mkdir(root)
+      Dir.mkdir(outside)
+      File.write(File.join(outside, 'escape.jq'), 'def escaped: true;')
+      File.symlink(File.join(outside, 'escape.jq'), File.join(root, 'linked.jq'))
+
+      expect { described_class.compile('include "../outside/escape"; .', library_path: [root]) }
+        .to raise_error(Rjq::CompileError, /escapes configured library roots/)
+      expect { described_class.compile('include "linked"; .', library_path: [root]) }
+        .to raise_error(Rjq::CompileError, /escapes configured library roots/)
+    end
+  end
+
+  it 'enforces the configured module size limit' do
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, 'large.jq'), 'def value: 123456789;')
+      resolver = Rjq::ModuleResolver.new(paths: [dir], use_default_paths: false, max_bytes: 8)
+
+      expect { described_class.compile('include "large"; value', module_resolver: resolver) }
+        .to raise_error(Rjq::CompileError, /exceeds 8 byte limit/)
+    end
+  end
+
+  it 'detects canonical module cycles and reports module source filenames' do
+    Dir.mktmpdir do |dir|
+      a_path = File.join(dir, 'a.jq')
+      b_path = File.join(dir, 'b.jq')
+      bad_path = File.join(dir, 'bad.jq')
+      File.write(a_path, 'include "b"; def a: 1;')
+      File.write(b_path, 'include "a"; def b: 2;')
+      File.write(bad_path, 'def broken: ;')
+
+      expect { described_class.compile('include "a"; .', library_path: [dir]) }
+        .to raise_error(Rjq::CompileError, /circular module import/)
+      expect { described_class.compile('include "bad"; .', library_path: [dir]) }
+        .to raise_error(Rjq::ParseError, /#{Regexp.escape(bad_path)}/)
+    end
+  end
+
+  it 'rejects non-constant metadata and unknown module metadata lookups' do
+    expect { described_class.compile('module {value: now}; .') }
+      .to raise_error(Rjq::CompileError, /metadata must be constant/)
+    expect { described_class.run('"missing" | modulemeta', nil).to_a }
+      .to raise_error(Rjq::RuntimeError, 'module not found: missing')
+  end
+
   it 'reports module metadata for arbitrary loaded modules' do
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, 'dep.jq'), "def dep: 1;\n")
+      File.write(File.join(dir, 'dep.json'), '{"data":true}')
       File.write(File.join(dir, 'meta.jq'), <<~JQ)
         module {whatever: "ok", version: 2, nested: {items: [true, null]}};
         include "dep" {search: "./"};

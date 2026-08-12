@@ -16,9 +16,10 @@ require_relative 'rjq/parser'
 require_relative 'rjq/builtins'
 require_relative 'rjq/opcodes'
 require_relative 'rjq/semantic_analyzer'
+require_relative 'rjq/modules'
+require_relative 'rjq/module_loader'
 require_relative 'rjq/compiler'
 require_relative 'rjq/vm'
-require_relative 'rjq/modules'
 require_relative 'rjq/runtime'
 
 module Rjq

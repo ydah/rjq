@@ -143,7 +143,9 @@ module Rjq
       return unless @opts[:filter_file]
 
       @files.unshift(@filter) if @filter
-      @filter = File.read(@opts.delete(:filter_file))
+      filter_file = @opts.delete(:filter_file)
+      @filter = File.read(filter_file)
+      @opts[:source_path] = File.realpath(filter_file)
     end
 
     def parse_long(arg)

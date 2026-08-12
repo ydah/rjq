@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Rjq
-  Token = Struct.new(:type, :value, :line, :column, keyword_init: true)
+  Token = Struct.new(:type, :value, :line, :column, :start_offset, :end_offset, :filename, keyword_init: true)
 
   class Lexer
     KEYWORDS = %w[
@@ -36,9 +36,10 @@ module Rjq
 
     attr_reader :tokens
 
-    def initialize(source, allow_comments: true)
+    def initialize(source, allow_comments: true, source_name: '<top-level>')
       @source = source.to_s
       @allow_comments = allow_comments
+      @source_name = source_name
       @index = 0
       @line = 1
       @column = 1
@@ -52,6 +53,7 @@ module Rjq
 
         start_line = @line
         start_column = @column
+        start_offset = @index
         char = current
         token =
           if char == '#'
@@ -79,9 +81,15 @@ module Rjq
           else
             read_operator_or_punctuation(start_line, start_column)
           end
-        @tokens << token if token
+        if token
+          token.start_offset = start_offset
+          token.end_offset = @index
+          token.filename = @source_name
+          @tokens << token
+        end
       end
-      @tokens << Token.new(type: :eof, value: nil, line: @line, column: @column)
+      @tokens << Token.new(type: :eof, value: nil, line: @line, column: @column, start_offset: @index,
+                           end_offset: @index, filename: @source_name)
       @tokens
     end
 
@@ -314,7 +322,7 @@ module Rjq
     end
 
     def parse_error(message)
-      ParseError.new("#{message} at line #{@line}, column #{@column}")
+      ParseError.new("#{message} at #{@source_name}, line #{@line}, column #{@column}")
     end
   end
 end
