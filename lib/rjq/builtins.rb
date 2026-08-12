@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'cgi'
+require 'date'
 require 'time'
 require 'uri'
 
@@ -11,7 +12,8 @@ module Rjq
       numbers strings not error halt halt_error input inputs debug stderr input_filename input_line_number null true
       false infinite nan isinfinite isnan isnormal add any all flatten floor ceil round sqrt log log2 log10 exp exp2 exp10
       pow10 atan abs cos sin tan acos asin cosh sinh tanh acosh asinh atanh cbrt significand logb gamma tgamma
-      lgamma lgamma_r frexp modf fabs nearbyint trunc rint j0 j1 y0 y1 to_entries from_entries to_number tonumber
+      lgamma lgamma_r frexp modf fabs nearbyint trunc rint j0 j1 y0 y1 erf erfc expm1 log1p isfinite finites normals
+      get_jq_origin get_prog_origin get_search_list to_entries from_entries to_number tonumber
       tostring tojson fromjson ascii explode implode ascii_downcase ascii_upcase recurse recurse_down paths leaf_paths
       tostream min max sort unique reverse combinations transpose first last env now gmtime localtime mktime fromdate
       todate fromdateiso8601 todateiso8601 date builtins modulemeta
@@ -21,11 +23,11 @@ module Rjq
       ltrimstr rtrimstr startswith endswith index rindex indices recurse recurse_down path paths leaf_paths getpath
       delpaths del pick walk fromstream truncate_stream min_by max_by sort_by group_by GROUP_BY unique_by UNIQUE_BY
       contains inside combinations bsearch first last nth repeat isempty strftime strflocaltime strptime dateadd datesub
-      test match capture scan splits
+      test match capture scan splits format
     ].freeze
     TWO_ARITY_BUILTINS = %w[
       IN INDEX JOIN any all range recurse recurse_down pow atan2 ldexp scalb scalbln drem setpath nth limit until while split test match
-      scan splits sub gsub
+      scan splits sub gsub capture copysign fdim fmax fmin fmod hypot jn nextafter nexttoward remainder yn
     ].freeze
     THREE_ARITY_BUILTINS = %w[JOIN range fma sub gsub].freeze
     FOUR_ARITY_BUILTINS = %w[JOIN].freeze
@@ -56,6 +58,10 @@ module Rjq
     module_function
 
     def call(name, input, context, args)
+      call_stream(name, input, context, args).to_a
+    end
+
+    def call_stream(name, input, context, args)
       argument_sets = args.each_with_index.map do |argument, index|
         if FILTER_ARGUMENT_POSITIONS.fetch(name, []).include?(index)
           [argument]
@@ -63,7 +69,11 @@ module Rjq
           argument.eval(input, context).map { |value| AST::Literal.new(value) }
         end
       end
-      cartesian(argument_sets).flat_map { |resolved_args| dispatch(name, input, context, resolved_args) }
+      Enumerator.new do |yielder|
+        cartesian(argument_sets).each do |resolved_args|
+          dispatch(name, input, context, resolved_args).each { |value| yielder << value }
+        end
+      end
     end
 
     def dispatch(name, input, context, args)
@@ -144,7 +154,13 @@ module Rjq
       when 'isnan'
         [input.is_a?(Float) && input.nan?]
       when 'isnormal'
-        [input.is_a?(Numeric) && input.to_f.finite? && input.to_f != 0.0]
+        [normal_number?(input)]
+      when 'isfinite'
+        [input.is_a?(Numeric) && input.to_f.finite?]
+      when 'finites'
+        input.is_a?(Numeric) && input.to_f.finite? ? [input] : []
+      when 'normals'
+        normal_number?(input) ? [input] : []
       when 'add'
         [add(input)]
       when 'abs'
@@ -160,9 +176,10 @@ module Rjq
       when 'floor', 'ceil', 'round', 'sqrt', 'log', 'log2', 'log10', 'exp', 'sin', 'cos', 'tan',
            'asin', 'acos', 'atan', 'sinh', 'cosh', 'tanh', 'asinh', 'acosh', 'atanh', 'cbrt',
            'trunc', 'fabs', 'gamma', 'tgamma', 'lgamma', 'significand', 'logb', 'nearbyint',
-           'rint', 'frexp', 'modf', 'lgamma_r', 'j0', 'j1', 'y0', 'y1'
+           'rint', 'frexp', 'modf', 'lgamma_r', 'j0', 'j1', 'y0', 'y1', 'erf', 'erfc', 'expm1', 'log1p'
         [math_unary(name, input)]
-      when 'pow', 'atan2', 'ldexp', 'scalb', 'scalbln', 'fma', 'drem'
+      when 'pow', 'atan2', 'ldexp', 'scalb', 'scalbln', 'fma', 'drem', 'copysign', 'fdim', 'fmax', 'fmin',
+           'fmod', 'hypot', 'jn', 'nextafter', 'nexttoward', 'remainder', 'yn'
         [math_nary(name, input, context, args)]
       when 'exp2'
         [2**numeric(input)]
@@ -326,6 +343,8 @@ module Rjq
         match_builtin(input, context, args)
       when 'capture'
         capture_builtin(input, context, args)
+      when 'format'
+        format_builtin(input, context, args)
       when 'scan'
         scan_builtin(input, context, args)
       when 'splits'
@@ -354,6 +373,13 @@ module Rjq
         [format_tsv(input)]
       when '@sh'
         [format_sh(input)]
+      when 'get_jq_origin'
+        [context.options.fetch(:jq_origin, File.expand_path('../..', __dir__))]
+      when 'get_prog_origin'
+        source_path = context.options[:source_path]
+        [source_path ? File.dirname(File.expand_path(source_path)) : Dir.pwd]
+      when 'get_search_list'
+        [search_list(context)]
       else
         raise CompileError, "#{name}/#{args.length} is not defined"
       end
@@ -417,7 +443,7 @@ module Rjq
 
     def inputs_builtin(context)
       queue = context.options[:input_queue]
-      return queue.remaining_values if queue
+      return queue.each_remaining if queue
 
       context.options.fetch(:remaining_inputs, [])
     end
@@ -481,22 +507,31 @@ module Rjq
     end
 
     def range(input, context, args)
-      arg_sets = args.map { |arg| arg.eval(input, context).map { |value| numeric(value) } }
-      cartesian(arg_sets).flat_map do |numbers|
-        from, to, step =
-          case numbers.length
-          when 1
-            [0, numbers[0], 1]
-          when 2
-            [numbers[0], numbers[1], 1]
-          when 3
-            numbers
-          else
-            raise RuntimeError, 'range expects 1 to 3 arguments'
-          end
-        raise RuntimeError, 'range step cannot be zero' if step.zero?
+      numbers = args.map { |arg| numeric(arg.eval(input, context).first) }
+      from, to, step =
+        case numbers.length
+        when 1
+          [0, numbers[0], 1]
+        when 2
+          [numbers[0], numbers[1], 1]
+        when 3
+          numbers
+        else
+          raise RuntimeError, 'range expects 1 to 3 arguments'
+        end
+      raise RuntimeError, 'range step cannot be zero' if step.zero?
 
-        range_values(from, to, step)
+      range_values(from, to, step)
+    end
+
+    def range_values(from, to, step)
+      Enumerator.new do |yielder|
+        current = from
+        comparison = step.positive? ? -> { current < to } : -> { current > to }
+        while comparison.call
+          yielder << current
+          current += step
+        end
       end
     end
 
@@ -506,23 +541,6 @@ module Rjq
       sets.reduce([[]]) do |acc, values|
         acc.flat_map { |prefix| values.map { |value| prefix + [value] } }
       end
-    end
-
-    def range_values(from, to, step)
-      out = []
-      current = from
-      if step.positive?
-        while current < to
-          out << current
-          current += step
-        end
-      else
-        while current > to
-          out << current
-          current += step
-        end
-      end
-      out
     end
 
     def math_unary(name, input)
@@ -567,9 +585,15 @@ module Rjq
         return -Float::INFINITY if value.zero?
 
         Math.log2(value.abs).floor
-      when 'nearbyint', 'rint' then value.round
+      when 'nearbyint', 'rint' then round_to_even(value)
       when 'j0', 'j1', 'y0', 'y1' then MathFunctions.bessel(name, value)
+      when 'erf' then Math.erf(value)
+      when 'erfc' then Math.erfc(value)
+      when 'expm1' then Math.expm1(value)
+      when 'log1p' then Math.log1p(value)
       end
+    rescue Math::DomainError
+      Float::NAN
     end
 
     def math_nary(name, input, context, args)
@@ -580,7 +604,56 @@ module Rjq
       when 'ldexp', 'scalb', 'scalbln' then Math.ldexp(values[0], values[1].to_i)
       when 'fma' then (values[0] * values[1]) + values[2]
       when 'drem' then values[0].remainder(values[1])
+      when 'copysign' then copy_sign(values[0], values[1])
+      when 'fdim' then values.any? { |value| value.to_f.nan? } ? Float::NAN : [values[0] - values[1], 0].max
+      when 'fmax' then float_extreme(values[0], values[1], :max)
+      when 'fmin' then float_extreme(values[0], values[1], :min)
+      when 'fmod' then values[0].remainder(values[1])
+      when 'hypot' then Math.hypot(values[0], values[1])
+      when 'jn', 'yn' then MathFunctions.bessel(name, values[0].to_i, values[1])
+      when 'nextafter', 'nexttoward' then next_float_toward(values[0], values[1])
+      when 'remainder' then ieee_remainder(values[0], values[1])
       end
+    rescue Math::DomainError, FloatDomainError, ZeroDivisionError
+      Float::NAN
+    end
+
+    def normal_number?(value)
+      return false unless value.is_a?(Numeric)
+
+      float = value.to_f
+      float.finite? && float.abs >= Float::MIN
+    end
+
+    def round_to_even(value)
+      rounded = value.to_f.round(half: :even)
+      rounded.zero? && value.to_f.negative? ? -0.0 : rounded
+    end
+
+    def copy_sign(magnitude, sign)
+      negative = sign.to_f.negative? || (sign.to_f.zero? && (1.0 / sign.to_f).negative?)
+      negative ? -magnitude.to_f.abs : magnitude.to_f.abs
+    end
+
+    def float_extreme(left, right, mode)
+      return right if left.to_f.nan?
+      return left if right.to_f.nan?
+
+      [left, right].public_send(mode)
+    end
+
+    def next_float_toward(value, target)
+      value = value.to_f
+      target = target.to_f
+      return target if value == target
+      return Float::NAN if value.nan? || target.nan?
+
+      value < target ? value.next_float : value.prev_float
+    end
+
+    def ieee_remainder(left, right)
+      quotient = (left.to_f / right.to_f).round(half: :even)
+      left.to_f - (right.to_f * quotient)
     end
 
     def to_entries(value)
@@ -696,23 +769,28 @@ module Rjq
     end
 
     def recurse(input, context, args)
-      return AST::Recurse.new.eval(input, context) if args.empty?
-
-      out = []
-      visit = lambda do |value|
-        out << value
-        args.first.eval(value, context).each { |child| visit.call(child) }
-      end
-      if args.length > 1
-        visit = lambda do |value|
-          out << value
-          args.first.eval(value, context).each do |child|
-            visit.call(child) if args[1].eval(child, context).any? { |result| Value.truthy?(result) }
+      Enumerator.new do |yielder|
+        stack = [input]
+        until stack.empty?
+          value = stack.pop
+          yielder << value
+          children = if args.empty?
+                       case value
+                       when Array then value
+                       when Hash then value.values
+                       else []
+                       end
+                     else
+                       args.first.eval(value, context)
+                     end
+          if args.length > 1
+            children = children.select do |child|
+              args[1].eval(child, context).any? { |result| Value.truthy?(result) }
+            end
           end
+          stack.concat(children.reverse)
         end
       end
-      visit.call(input)
-      out
     end
 
     def delpaths(input, paths)
@@ -1059,41 +1137,54 @@ module Rjq
 
     def until_filter(input, context, args)
       condition, update = args
-      value = input
-      guard = 0
-      until condition.eval(value, context).any? { |item| Value.truthy?(item) }
-        value = update.eval(value, context).first
-        guard += 1
-        raise RuntimeError, 'until exceeded iteration guard' if guard > 100_000
+      Enumerator.new do |yielder|
+        tasks = [[:visit, input]]
+        until tasks.empty?
+          type, value = tasks.pop
+          if type == :emit
+            yielder << value
+            next
+          end
+
+          actions = condition.eval(value, context).flat_map do |result|
+            if Value.truthy?(result)
+              [[:emit, value]]
+            else
+              update.eval(value, context).map { |next_value| [:visit, next_value] }
+            end
+          end
+          tasks.concat(actions.reverse)
+        end
       end
-      [value]
     end
 
     def while_filter(input, context, args)
       condition, update = args
-      out = []
-      value = input
-      guard = 0
-      while condition.eval(value, context).any? { |item| Value.truthy?(item) }
-        out << value
-        value = update.eval(value, context).first
-        guard += 1
-        raise RuntimeError, 'while exceeded iteration guard' if guard > 100_000
+      Enumerator.new do |yielder|
+        tasks = [[:visit, input]]
+        until tasks.empty?
+          type, value = tasks.pop
+          if type == :emit
+            yielder << value
+            next
+          end
+
+          actions = condition.eval(value, context).flat_map do |result|
+            next [] unless Value.truthy?(result)
+
+            [[:emit, value]] + update.eval(value, context).map { |next_value| [:visit, next_value] }
+          end
+          tasks.concat(actions.reverse)
+        end
       end
-      out
     end
 
     def repeat_filter(input, context, args)
-      out = []
-      value = input
-      1000.times do
-        out << value
-        values = args.fetch(0).eval(value, context)
-        break if values.empty?
-
-        value = values.first
+      Enumerator.new do |yielder|
+        loop do
+          args.fetch(0).eval(input, context).each { |value| yielder << value }
+        end
       end
-      out
     end
 
     def time_array(time)
@@ -1104,7 +1195,7 @@ module Rjq
       values = assert_array(input)
       raise TypeError, 'mktime requires parsed datetime inputs' unless values.first(6).all?(Numeric)
 
-      Time.local(values[0], values[1] + 1, values[2], values[3], values[4], values[5]).to_f
+      Time.utc(values[0], values[1] + 1, values[2], values[3], values[4], values[5]).to_f
     rescue ArgumentError
       raise TypeError, 'mktime requires parsed datetime inputs'
     end
@@ -1136,18 +1227,40 @@ module Rjq
     end
 
     def strptime(input, context, args)
-      time_array(Time.strptime(assert_string(input), assert_string(eval_arg(args, 0, input, context))).utc)
+      parsed = DateTime.strptime(assert_string(input), assert_string(eval_arg(args, 0, input, context)))
+      [parsed.year, parsed.month - 1, parsed.day, parsed.hour, parsed.min, parsed.sec, parsed.wday, parsed.yday - 1]
+    rescue Date::Error
+      raise RuntimeError, 'date does not match format'
     end
 
     def regexp(input, context, args)
       pattern, flags = regexp_parts(input, context, args)
+      unknown_flags = flags.each_char.uniq - %w[g i m n p s l x]
+      raise RuntimeError, "unsupported regular expression flag: #{unknown_flags.first}" unless unknown_flags.empty?
+
       options = 0
       options |= Regexp::IGNORECASE if flags.include?('i')
-      options |= Regexp::MULTILINE if flags.include?('m') || flags.include?('s')
+      options |= Regexp::MULTILINE if flags.include?('m') || flags.include?('p')
       options |= Regexp::EXTENDED if flags.include?('x')
       [Regexp.new(pattern, options), flags]
     rescue RegexpError => e
-      raise e.message.to_s
+      raise RuntimeError, e.message.to_s
+    end
+
+    def format_builtin(input, context, args)
+      format_name = assert_string(eval_arg(args, 0, input, context))
+      supported = %w[text json html uri csv tsv sh base64 base64d]
+      raise RuntimeError, "format #{format_name.inspect} is not supported" unless supported.include?(format_name)
+
+      dispatch("@#{format_name}", input, context, [])
+    end
+
+    def search_list(context)
+      configured = context.options.fetch(:library_path, [])
+      return configured.map { |path| File.expand_path(path) } unless configured.empty?
+
+      environment = ENV.fetch('JQ_LIBRARY_PATH', '').split(File::PATH_SEPARATOR).reject(&:empty?)
+      (environment + [File.expand_path('~/.jq'), File.expand_path('~/.rjq')]).uniq
     end
 
     def regexp_parts(input, context, args)
@@ -1269,21 +1382,37 @@ module Rjq
     end
 
     def csv_field(item)
-      text = item.nil? ? '' : to_string(item)
-      needs_quotes = text.match?(/[",\r\n]/)
-      escaped = text.gsub('"', '""')
-      needs_quotes ? "\"#{escaped}\"" : escaped
+      return '' if item.nil?
+      return to_string(item) if item.is_a?(Numeric) || item == true || item == false
+      unless item.is_a?(String)
+        raise TypeError, "#{Value.type_of(item)} (#{short_dump(item)}) is not valid in a csv row"
+      end
+
+      "\"#{item.gsub('"', '""')}\""
     end
 
     def format_tsv(input)
       assert_array(input).map do |item|
-        to_string(item).gsub("\t", '\\t').gsub("\n", '\\n').gsub("\r", '\\r')
+        next '' if item.nil?
+        next to_string(item) if item.is_a?(Numeric) || item == true || item == false
+        unless item.is_a?(String)
+          raise TypeError, "#{Value.type_of(item)} (#{short_dump(item)}) is not valid in a tsv row"
+        end
+
+        item.gsub("\t", '\\t').gsub("\n", '\\n').gsub("\r", '\\r')
       end.join("\t")
     end
 
     def format_sh(input)
       values = input.is_a?(Array) ? input : [input]
-      values.map { |item| sh_quote(to_string(item)) }.join(' ')
+      values.map do |item|
+        case item
+        when String then sh_quote(item)
+        when Numeric, TrueClass, FalseClass, NilClass then to_string(item)
+        else
+          raise TypeError, "#{Value.type_of(item)} (#{short_dump(item)}) can not be escaped for shell"
+        end
+      end.join(' ')
     end
 
     def sh_quote(input)

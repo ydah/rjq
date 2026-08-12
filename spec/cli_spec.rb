@@ -14,6 +14,15 @@ RSpec.describe Rjq::CLI do
     expect(out.string).to eq("[1,2]\n")
   end
 
+  it 'accepts a negative numeric expression as the filter' do
+    out = StringIO.new
+
+    code = described_class.new(['-nc', '-1 | abs'], stdin: StringIO.new, stdout: out, stderr: StringIO.new).run
+
+    expect(code).to eq(0)
+    expect(out.string).to eq("1\n")
+  end
+
   it 'binds --argjson values' do
     out = StringIO.new
     code = described_class.new(['-n', '-c', '--argjson', 'x', '2', '$x + 3'], stdin: StringIO.new, stdout: out,

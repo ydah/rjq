@@ -128,6 +128,12 @@ module Rjq
           @argv.clear
         when /\A--/
           parse_long(arg)
+        when /\A-(?:\d|\.)/
+          if @filter.nil? && !@opts[:filter_file]
+            @filter = arg
+          else
+            @files << arg
+          end
         when /\A-[^-]/
           parse_short(arg)
         else

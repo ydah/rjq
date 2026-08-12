@@ -490,12 +490,8 @@ module Rjq
         return user_function_stream(input, context, context.functions.fetch([name, arg_blocks.length]), arg_blocks)
       end
 
-      if name == 'inputs' && arg_blocks.empty? && context.options[:input_queue]
-        return context.options.fetch(:input_queue).each_remaining
-      end
-
       builtin_args = arg_blocks.map { |block| BytecodeFilter.new(self, block) }
-      deferred_values_stream { Builtins.call(name, input, context, builtin_args) }
+      deferred_values_stream { Builtins.call_stream(name, input, context, builtin_args) }
     end
 
     def user_function_stream(input, context, definition, arg_blocks)
@@ -505,14 +501,14 @@ module Rjq
     end
 
     def recurse_stream(input)
-      Enumerator.new { |yielder| emit_recurse(input, yielder) }
-    end
-
-    def emit_recurse(value, yielder)
-      yielder << value
-      case value
-      when Array then value.each { |item| emit_recurse(item, yielder) }
-      when Hash then value.each_value { |item| emit_recurse(item, yielder) }
+      Enumerator.new do |yielder|
+        stack = [input]
+        until stack.empty?
+          value = stack.pop
+          yielder << value
+          children = value.is_a?(Array) ? value : value.is_a?(Hash) ? value.values : []
+          stack.concat(children.reverse)
+        end
       end
     end
 

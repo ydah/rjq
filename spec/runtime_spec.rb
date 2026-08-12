@@ -17,6 +17,20 @@ RSpec.describe Rjq do
     expect(described_class.run('map(select(.x > 2) | .x) | add', input).to_a).to eq([11])
   end
 
+  it 'keeps generators lazy and removes fixed iteration cutoffs' do
+    expect(described_class.run('first(range(0; 1000000000000))', nil).to_a).to eq([0])
+    expect(described_class.run('limit(5; repeat(. + 1))', nil).to_a).to eq([1, 1, 1, 1, 1])
+    expect(described_class.run('while(. < 3; . + 1, . + 2)', nil).to_a).to eq([nil, 1, 2, 2])
+    expect(described_class.run('until(. >= 3; . + 1, . + 2)', nil).to_a).to eq([3, 4, 3, 3, 4])
+  end
+
+  it 'traverses deeply nested values without Ruby recursion' do
+    nested = 0
+    10_000.times { nested = [nested] }
+
+    expect(described_class.run('recurse', nested).to_a.length).to eq(10_001)
+  end
+
   it 'lets try/catch handle builtin runtime errors' do
     expect(described_class.run('try flatten(-1) catch .', nil).to_a).to eq(['flatten depth must not be negative'])
     expect(described_class.run('try nth(-1; [1]) catch .', nil).to_a).to eq(["nth doesn't support negative indices"])
@@ -78,7 +92,8 @@ RSpec.describe Rjq do
     names = described_class.run('builtins', nil).to_a.fetch(0)
 
     expect(names).to include('halt/0', 'input/0', 'pow/2', 'fma/3', 'JOIN/4', 'error/0', 'halt_error/0',
-                             'first/1', 'last/1', 'bsearch/1')
+                             'first/1', 'last/1', 'bsearch/1', 'capture/2', 'format/1', 'copysign/2',
+                             'erf/0', 'finites/0', 'get_search_list/0', 'jn/2', 'nextafter/2')
     expect(names).not_to include('halt/1', 'pow/1')
   end
 
@@ -130,6 +145,48 @@ RSpec.describe Rjq do
     ).to_a
 
     expect(result).to eq([[true, true, [true, false], true, 1]])
+  end
+
+  it 'implements jq math filtering, rounding, and domain semantics' do
+    result = described_class.run(
+      '[fmax(nan;2), fmin(nan;2), fdim(-3;2), fdim(5;2), fmod(5.3;2), remainder(5.3;2),' \
+      ' nextafter(1;2), nexttoward(2;1), copysign(2;-0), hypot(3;4)]', nil
+    ).to_a.first
+
+    expect(result).to eq([2, 2, 0, 3, 1.2999999999999998, -0.7000000000000002,
+                          1.0000000000000002, 1.9999999999999998, -2, 5])
+    expect(described_class.run('[(-1|sqrt|isnan), (0|isfinite), (infinite|isfinite),' \
+                               ' (0|normals), (1|normals), (infinite|finites), (1|finites)]', nil).to_a)
+      .to eq([[true, true, false, 1, 1]])
+    expect(described_class.run('[(0.5|nearbyint),(1.5|nearbyint),(2.5|nearbyint),(-0.5|rint)]', nil).to_a)
+      .to eq([[0, 2, 2, -0.0]])
+  end
+
+  it 'keeps date conversion independent of the host timezone' do
+    expect(described_class.run('[0 | gmtime | mktime]', nil).to_a).to eq([[0]])
+    expect(described_class.run('"2015-03-05T23:51:47Z" | strptime("%Y-%m-%dT%H:%M:%SZ")', nil).to_a)
+      .to eq([[2015, 2, 5, 23, 51, 47, 4, 63]])
+  end
+
+  it 'supports jq format validation and two-argument capture' do
+    expect(described_class.run('["a",1,true,null] | [format("csv"), format("tsv"), format("sh")]', nil).to_a)
+      .to eq([['"a",1,true,', "a\t1\ttrue\t", "'a' 1 true null"]])
+    expect(described_class.run('"Ab" | capture("(?<x>a)"; "i")', nil).to_a).to eq([{ 'x' => 'A' }])
+    expect(described_class.run('[("a\nb"|test("a.b";"m")), ("a\nb"|test("a.b";"s"))]', nil).to_a)
+      .to eq([[true, false]])
+    expect { described_class.run('"a" | test("a";"z")', nil).to_a }
+      .to raise_error(Rjq::RuntimeError, /unsupported regular expression flag/)
+    expect { described_class.run('[{}] | @csv', nil).to_a }
+      .to raise_error(Rjq::TypeError, /not valid in a csv row/)
+  end
+
+  it 'reports program origins and the configured module search list' do
+    opts = { source_path: '/tmp/filter.jq', library_path: ['lib'] }
+    origins = described_class.run('[get_jq_origin, get_prog_origin, get_search_list]', nil, opts).to_a.first
+
+    expect(origins[0]).to be_a(String)
+    expect(origins[1]).to eq('/tmp')
+    expect(origins[2]).to eq([File.expand_path('lib')])
   end
 
   it 'validates getpath component types' do

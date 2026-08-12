@@ -13,8 +13,12 @@ module Rjq
 
     module_function
 
-    def bessel(name, value)
-      bessel_library.public_send(name, value.to_f)
+    def bessel(name, *values)
+      if %w[jn yn].include?(name)
+        bessel_library.public_send(name, values.fetch(0).to_i, values.fetch(1).to_f)
+      else
+        bessel_library.public_send(name, values.fetch(0).to_f)
+      end
     end
 
     def bessel_library
@@ -41,6 +45,8 @@ module Rjq
         extern 'double j1(double)'
         extern 'double y0(double)'
         extern 'double y1(double)'
+        extern 'double jn(int, double)'
+        extern 'double yn(int, double)'
       end
     end
   end

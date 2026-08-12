@@ -74,7 +74,7 @@ CASES.each do |filter, input|
                        .flat_map { |value| Rjq.run(filter, value).to_a }
                        .map { |value| Rjq::JSON::Dumper.dump(value, indent: nil) }
                        .join("\n")
-    rescue Exception => e
+    rescue StandardError => e
       "ERROR #{e.class}: #{e.message}\n"
     end
   out += "\n" unless out.empty? || out.end_with?("\n")
