@@ -350,9 +350,12 @@ module Rjq
           accumulator = initial
           each_block(spec.fetch(:generator).instructions, input, context).each do |value|
             ctx = AST.bind_pattern(context, spec.fetch(:pattern), value)
-            each_block(spec.fetch(:update).instructions, accumulator, ctx).each do |updated|
-              accumulator = updated
+            did_update = false
+            each_block(spec.fetch(:update).instructions, accumulator, ctx).each do |next_accumulator|
+              did_update = true
+              accumulator = next_accumulator
             end
+            accumulator = nil unless did_update
           end
           yielder << accumulator
         end
@@ -365,15 +368,18 @@ module Rjq
           accumulator = initial
           each_block(spec.fetch(:generator).instructions, input, context).each do |value|
             ctx = AST.bind_pattern(context, spec.fetch(:pattern), value)
-            each_block(spec.fetch(:update).instructions, accumulator, ctx).each do |updated|
-              accumulator = updated
+            did_update = false
+            each_block(spec.fetch(:update).instructions, accumulator, ctx).each do |next_accumulator|
+              did_update = true
+              accumulator = next_accumulator
               values = if spec[:extract]
-                         each_block(spec.fetch(:extract).instructions, updated, ctx)
+                         each_block(spec.fetch(:extract).instructions, next_accumulator, ctx)
                        else
-                         value_stream(updated)
+                         value_stream(next_accumulator)
                        end
               values.each { |item| yielder << item }
             end
+            accumulator = nil unless did_update
           rescue BreakSignal => e
             raise BreakSignal.new(e.label, e.value, outputs: e.outputs)
           end
