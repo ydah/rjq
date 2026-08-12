@@ -27,6 +27,7 @@ module Rjq
     def initialize
       @constants = []
       @constant_indices = {}
+      @current_nodes = []
     end
 
     def compile(ast, module_metadata: {}, module_variables: {})
@@ -44,6 +45,7 @@ module Rjq
     private
 
     def compile_node(node)
+      @current_nodes << node
       case node
       when AST::Identity
         [instruction(:load_input)]
@@ -56,69 +58,71 @@ module Rjq
       when AST::Variable
         [instruction(:variable, node.name, nil, loc: node.source_span)]
       when AST::Field
-        compile_node(ivar(node, :base)) + [instruction(:field, ivar(node, :name))]
+        compile_node(node.base) + [instruction(:field, node.name)]
       when AST::Index
         compile_index(node)
       when AST::Slice
         compile_slice(node)
       when AST::Iterate
-        compile_node(ivar(node, :base)) + [instruction(:each)]
+        compile_node(node.base) + [instruction(:each)]
       when AST::Optional
-        [instruction(:optional, block_for(ivar(node, :node)))]
+        [instruction(:optional, block_for(node.node))]
       when AST::Pipe
-        compile_node(ivar(node, :left)) + [instruction(:pipe, block_for(ivar(node, :right)))]
+        compile_node(node.left) + [instruction(:pipe, block_for(node.right))]
       when AST::Comma
         compile_node(node.left) + [instruction(:append, block_for(node.right))]
       when AST::Binding
         [instruction(:binding, {
-                       source: block_for(ivar(node, :source)),
-                       pattern: ivar(node, :pattern),
-                       body: block_for(ivar(node, :body))
+                       source: block_for(node.source),
+                       pattern: node.pattern,
+                       body: block_for(node.body)
                      })]
       when AST::ArrayLiteral
-        expression = ivar(node, :expression)
+        expression = node.expression
         [instruction(:array, expression ? block_for(expression) : nil)]
       when AST::ObjectLiteral
-        [instruction(:object, compile_object_pairs(ivar(node, :pairs)))]
+        [instruction(:object, compile_object_pairs(node.pairs))]
       when AST::FunctionCall
         compile_call(node)
       when AST::BinaryOp
         compile_binary(node)
       when AST::UnaryOp
-        [instruction(:unary, ivar(node, :op), block_for(ivar(node, :expression)))]
+        [instruction(:unary, node.op, block_for(node.expression))]
       when AST::If
         compile_if(node)
       when AST::Try
-        [instruction(:try, { body: block_for(ivar(node, :body)), handler: optional_block(ivar(node, :handler)) })]
+        [instruction(:try, { body: block_for(node.body), handler: optional_block(node.handler) })]
       when AST::Reduce
         [instruction(:reduce, {
-                       generator: block_for(ivar(node, :generator)),
-                       pattern: ivar(node, :variable),
-                       initial: block_for(ivar(node, :initial)),
-                       update: block_for(ivar(node, :update))
+                       generator: block_for(node.generator),
+                       pattern: node.variable,
+                       initial: block_for(node.initial),
+                       update: block_for(node.update)
                      })]
       when AST::Foreach
         [instruction(:foreach, {
-                       generator: block_for(ivar(node, :generator)),
-                       pattern: ivar(node, :variable),
-                       initial: block_for(ivar(node, :initial)),
-                       update: block_for(ivar(node, :update)),
-                       extract: optional_block(ivar(node, :extract))
+                       generator: block_for(node.generator),
+                       pattern: node.variable,
+                       initial: block_for(node.initial),
+                       update: block_for(node.update),
+                       extract: optional_block(node.extract)
                      })]
       when AST::Label
-        [instruction(:label, ivar(node, :label), block_for(ivar(node, :body)))]
+        [instruction(:label, node.label, block_for(node.body))]
       when AST::Break
-        [instruction(:break, ivar(node, :label))]
+        [instruction(:break, node.label)]
       when AST::Assignment
         [instruction(:assign,
-                     { left: block_for(ivar(node, :left)), op: ivar(node, :op), right: block_for(ivar(node, :right)) })]
+                     { left: block_for(node.left), op: node.op, right: block_for(node.right) })]
       when AST::ScopedDefinition
-        [instruction(:scoped_def, compile_definition(ivar(node, :definition)), block_for(ivar(node, :body)))]
+        [instruction(:scoped_def, compile_definition(node.definition), block_for(node.body))]
       when AST::Recurse
         [instruction(:recurse)]
       else
         raise CompileError, "unsupported AST node #{node.class}"
       end
+    ensure
+      @current_nodes.pop
     end
 
     def compile_string(node)
@@ -138,30 +142,30 @@ module Rjq
     end
 
     def compile_format(node)
-      expression = ivar(node, :expression)
-      return [instruction(:format, ivar(node, :name), nil)] unless expression
+      expression = node.expression
+      return [instruction(:format, node.name, nil)] unless expression
 
       if expression.is_a?(AST::StringLiteral) && expression.value.is_a?(Array)
-        return [instruction(:format, ivar(node, :name), { segments: expression.value.map do |kind, value|
+        return [instruction(:format, node.name, { segments: expression.value.map do |kind, value|
           compile_string_segment(kind, value)
         end })]
       end
 
-      [instruction(:format, ivar(node, :name), { block: block_for(expression) })]
+      [instruction(:format, node.name, { block: block_for(expression) })]
     end
 
     def compile_index(node)
-      base = compile_node(ivar(node, :base))
-      index = ivar(node, :index)
+      base = compile_node(node.base)
+      index = node.index
       return base + [instruction(:index_const, index.value)] if index.is_a?(AST::Literal)
 
       base + [instruction(:index_filter, block_for(index))]
     end
 
     def compile_slice(node)
-      start_node = ivar(node, :start_node)
-      finish_node = ivar(node, :finish_node)
-      base = compile_node(ivar(node, :base))
+      start_node = node.start_node
+      finish_node = node.finish_node
+      base = compile_node(node.base)
       if literal_or_nil?(start_node) && literal_or_nil?(finish_node)
         return base + [instruction(:slice_const, literal_value(start_node), literal_value(finish_node))]
       end
@@ -177,15 +181,14 @@ module Rjq
     end
 
     def compile_binary(node)
-      op = ivar(node, :op)
-      [instruction(:binary, op, [block_for(ivar(node, :left)), block_for(ivar(node, :right))])]
+      [instruction(:binary, node.op, [block_for(node.left), block_for(node.right)])]
     end
 
     def compile_if(node)
       [instruction(
         :branch,
-        block_for(ivar(node, :condition)),
-        [block_for(ivar(node, :then_branch)), block_for(ivar(node, :else_branch))]
+        block_for(node.condition),
+        [block_for(node.then_branch), block_for(node.else_branch)]
       )]
     end
 
@@ -239,11 +242,10 @@ module Rjq
     end
 
     def instruction(op, arg1 = nil, arg2 = nil, loc: nil)
-      Instruction.new(op: op, arg1: arg1, arg2: arg2, loc: loc)
-    end
-
-    def ivar(object, name)
-      object.instance_variable_get(:"@#{name}")
+      location = loc || @current_nodes.last&.source_span || AST::SourceSpan.new(
+        filename: '<top-level>', line: 1, column: 1, start_offset: 0, end_offset: 0
+      )
+      Instruction.new(op: op, arg1: arg1, arg2: arg2, loc: location)
     end
   end
 

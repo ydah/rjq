@@ -125,6 +125,8 @@ module Rjq
     end
 
     class ScopedDefinition < Node
+      attr_reader :definition, :body
+
       def initialize(definition, body)
         @definition = definition
         @body = body
@@ -217,6 +219,8 @@ module Rjq
     end
 
     class Format < Node
+      attr_reader :name, :expression
+
       def initialize(name, expression = nil)
         @name = name
         @expression = expression
@@ -273,6 +277,8 @@ module Rjq
     end
 
     class Pipe < Node
+      attr_reader :left, :right
+
       def initialize(left, right)
         @left = left
         @right = right
@@ -330,6 +336,8 @@ module Rjq
     end
 
     class Binding < Node
+      attr_reader :source, :pattern, :body
+
       def initialize(source, pattern, body)
         @source = source
         @pattern = pattern
@@ -386,6 +394,8 @@ module Rjq
     end
 
     class Index < Node
+      attr_reader :base, :index
+
       def initialize(base, index, optional: false)
         @base = base
         @index = index
@@ -446,6 +456,8 @@ module Rjq
     end
 
     class Slice < Node
+      attr_reader :base, :start_node, :finish_node
+
       def initialize(base, start_node, finish_node, optional: false)
         @base = base
         @start_node = start_node
@@ -516,6 +528,8 @@ module Rjq
     end
 
     class Iterate < Node
+      attr_reader :base
+
       def initialize(base, optional: false)
         @base = base
         @optional = optional
@@ -565,6 +579,8 @@ module Rjq
     end
 
     class Optional < Node
+      attr_reader :node
+
       def initialize(node)
         @node = node
       end
@@ -577,6 +593,8 @@ module Rjq
     end
 
     class ArrayLiteral < Node
+      attr_reader :expression
+
       def initialize(expression)
         @expression = expression
       end
@@ -588,6 +606,7 @@ module Rjq
 
     class ObjectLiteral < Node
       Pair = Struct.new(:key, :value, keyword_init: true)
+      attr_reader :pairs
 
       def initialize(pairs)
         @pairs = pairs
@@ -617,6 +636,8 @@ module Rjq
     end
 
     class If < Node
+      attr_reader :condition, :then_branch, :else_branch
+
       def initialize(condition, then_branch, else_branch)
         @condition = condition
         @then_branch = then_branch
@@ -632,6 +653,8 @@ module Rjq
     end
 
     class Try < Node
+      attr_reader :body, :handler
+
       def initialize(body, handler = nil)
         @body = body
         @handler = handler
@@ -647,6 +670,8 @@ module Rjq
     end
 
     class Reduce < Node
+      attr_reader :generator, :variable, :initial, :update
+
       def initialize(generator, variable, initial, update)
         @generator = generator
         @variable = variable
@@ -665,6 +690,8 @@ module Rjq
     end
 
     class Foreach < Node
+      attr_reader :generator, :variable, :initial, :update, :extract
+
       def initialize(generator, variable, initial, update, extract)
         @generator = generator
         @variable = variable
@@ -690,6 +717,8 @@ module Rjq
     end
 
     class Label < Node
+      attr_reader :label, :body
+
       def initialize(label, body)
         @label = label
         @body = body
@@ -707,6 +736,8 @@ module Rjq
     end
 
     class Break < Node
+      attr_reader :label
+
       def initialize(label)
         @label = label
       end
@@ -717,6 +748,8 @@ module Rjq
     end
 
     class UnaryOp < Node
+      attr_reader :op, :expression
+
       def initialize(op, expression)
         @op = op
         @expression = expression
@@ -744,6 +777,8 @@ module Rjq
     end
 
     class BinaryOp < Node
+      attr_reader :left, :op, :right
+
       def initialize(left, op, right)
         @left = left
         @op = op
@@ -922,6 +957,7 @@ module Rjq
     class Assignment < Node
       DELETE = Object.new.freeze
       NO_OUTPUT = Object.new.freeze
+      attr_reader :left, :op, :right
 
       def initialize(left, op, right)
         @left = left

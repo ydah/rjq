@@ -13,6 +13,12 @@ RSpec.describe Rjq do
     ])
   end
 
+  it 'keeps the variable location through postfix expressions' do
+    filter = "[\n$__loc__.line,\n$__loc__[\"line\"],\n($__loc__? | .line)\n]"
+
+    expect(described_class.run(filter, nil).to_a).to eq([[2, 3, 4]])
+  end
+
   it 'runs identity, field access, pipes, and iteration' do
     expect(described_class.run('.foo | .[]', { 'foo' => [1, 2, 3] }).to_a).to eq([1, 2, 3])
   end

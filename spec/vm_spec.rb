@@ -9,6 +9,32 @@ RSpec.describe Rjq::VM do
     expect(instruction.loc).to have_attributes(filename: '/tmp/filter.jq', line: 2, column: 1)
   end
 
+  it 'assigns locations to every nested instruction and displays them' do
+    compiled = Rjq.compile(".foo | [\n$__loc__.line + 1,\ntry .[] catch .\n]", source_path: '/tmp/filter.jq')
+    locations = []
+    visit = lambda do |value|
+      case value
+      when Rjq::Instruction
+        locations << value.loc
+        visit.call(value.arg1)
+        visit.call(value.arg2)
+      when Rjq::BytecodeBlock
+        visit.call(value.instructions)
+      when Rjq::BytecodeFunctionDefinition
+        visit.call(value.body)
+      when Array
+        value.each { |item| visit.call(item) }
+      when Hash
+        value.each_value { |item| visit.call(item) }
+      end
+    end
+    visit.call(compiled.instructions)
+
+    expect(locations).not_to be_empty
+    expect(locations).to all(be_a(Rjq::AST::SourceSpan))
+    expect(compiled.disasm).to include('@ /tmp/filter.jq:2:1', '@ /tmp/filter.jq:3:1')
+  end
+
   it 'compiles simple path filters into bytecode instructions' do
     program = Rjq.compile('.foo | .[]')
 

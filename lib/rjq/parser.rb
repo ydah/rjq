@@ -282,6 +282,7 @@ module Rjq
         else
           raise error("unexpected token #{current.type}")
         end
+      node = add_source_span(node, start_token) unless node.source_span
       add_source_span(parse_postfix(node), start_token)
     end
 

@@ -13,7 +13,8 @@ module Rjq
 
   Instruction = Struct.new(:op, :arg1, :arg2, :loc, keyword_init: true) do
     def to_s
-      [Opcodes::MNEMONICS.fetch(op), format_arg(arg1), format_arg(arg2)].compact.join(' ')
+      text = [Opcodes::MNEMONICS.fetch(op), format_arg(arg1), format_arg(arg2)].compact.join(' ')
+      loc ? "#{text} @ #{loc.filename}:#{loc.line}:#{loc.column}" : text
     end
 
     private
