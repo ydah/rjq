@@ -25,6 +25,13 @@ RSpec.describe Rjq::Lexer do
     expect(fragment.source).to eq("1 # ) ( \"\n")
   end
 
+  it 'scans nested interpolation structurally inside quoted strings' do
+    source = %q{"outer \("a \("x \(2) ( )") b")"}
+    fragment = described_class.new(source).tokenize.first.value.last.last
+
+    expect(fragment.source).to eq(%q{"a \("x \(2) ( )") b"})
+  end
+
   it 'tokenizes negative zero as unary minus and a number literal' do
     tokens = described_class.new('-0').tokenize
 

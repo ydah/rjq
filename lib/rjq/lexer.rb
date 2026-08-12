@@ -164,39 +164,41 @@ module Rjq
     end
 
     def read_interpolation
-      depth = 1
-      quote = nil
-      escape = false
-      comment = false
+      frames = [{ type: :expression, depth: 1 }]
       start = @index
 
       until eof?
         char = advance
-        if comment
-          comment = false if char == "\n"
-          next
-        end
-        if quote
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == quote
-            quote = nil
+        frame = frames.last
+        case frame.fetch(:type)
+        when :comment
+          frames.pop if char == "\n"
+        when :string
+          if char == '\\'
+            if current == '('
+              advance
+              frames << { type: :expression, depth: 1 }
+            else
+              advance unless eof?
+            end
+          elsif char == frame.fetch(:quote)
+            frames.pop
           end
-          next
-        end
-
-        case char
-        when '#'
-          comment = true if @allow_comments
-        when '"', "'"
-          quote = char
-        when '('
-          depth += 1
-        when ')'
-          depth -= 1
-          return @source[start...(@index - 1)] if depth.zero?
+        when :expression
+          case char
+          when '#'
+            frames << { type: :comment }
+          when '"', "'"
+            frames << { type: :string, quote: char }
+          when '('
+            frame[:depth] += 1
+          when ')'
+            frame[:depth] -= 1
+            if frame.fetch(:depth).zero?
+              frames.pop
+              return @source[start...(@index - 1)] if frames.empty?
+            end
+          end
         end
       end
 

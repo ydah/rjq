@@ -43,8 +43,22 @@ RSpec.describe Rjq do
     expect(filters.map { |filter| described_class.run(filter, nil).to_a }).to eq([
       ['x1'], ['x1'], ['x1'], ['x2'], ['x1']
     ])
-    expect { described_class.compile(%Q{"x\\(1 # )\n)"}, allow_comments: false) }
-      .to raise_error(Rjq::ParseError)
+    [%Q{"x\\(1 # )\n)"}, %Q{"x\\(1 # (\n)"}].each do |filter|
+      expect { described_class.compile(filter, allow_comments: false) }
+        .to raise_error(Rjq::ParseError, /comments are disabled/)
+    end
+  end
+
+  it 'evaluates nested string interpolation with structural delimiters' do
+    filters = [
+      %q{"outer \("inner \((1 + 2)) end")"},
+      %q{"outer \("a \("(" + ")") b")"},
+      %q{"outer \("a \("x \(2)") b")"}
+    ]
+
+    expect(filters.map { |filter| described_class.run(filter, nil).to_a }).to eq([
+      ['outer inner 3 end'], ['outer a () b'], ['outer a x 2 b']
+    ])
   end
 
   it 'uses comment-aware interpolation boundaries in modules' do
@@ -54,7 +68,7 @@ RSpec.describe Rjq do
       expect(described_class.run('include "commented"; value', nil, library_path: [dir]).to_a).to eq(['x1'])
       expect do
         described_class.compile('include "commented"; value', library_path: [dir], allow_comments: false)
-      end.to raise_error(Rjq::ParseError)
+      end.to raise_error(Rjq::ParseError, /comments are disabled/)
     end
   end
 
