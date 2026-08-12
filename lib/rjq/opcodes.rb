@@ -48,13 +48,11 @@ module Rjq
   end
 
   class Program
-    attr_reader :instructions, :constants, :subroutines, :definitions, :module_metadata, :module_variables
+    attr_reader :instructions, :constants, :definitions, :module_metadata, :module_variables
 
-    def initialize(instructions:, constants: [], subroutines: {}, definitions: [], module_metadata: {},
-                   module_variables: {})
+    def initialize(instructions:, constants: [], definitions: [], module_metadata: {}, module_variables: {})
       @instructions = instructions
       @constants = constants
-      @subroutines = subroutines
       @definitions = definitions
       @module_metadata = module_metadata
       @module_variables = module_variables
@@ -73,7 +71,6 @@ module Rjq
     def finalize!
       freeze_value(instructions)
       freeze_value(constants)
-      freeze_value(subroutines)
       freeze_value(definitions)
       freeze_value(module_metadata)
       freeze_value(module_variables)

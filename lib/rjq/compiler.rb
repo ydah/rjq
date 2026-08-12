@@ -46,7 +46,6 @@ module Rjq
       Rjq::Program.new(
         instructions: instructions,
         constants: @constants,
-        subroutines: {},
         definitions: ast.definitions.map { |definition| compile_definition(definition) },
         module_metadata: module_metadata,
         module_variables: module_variables
