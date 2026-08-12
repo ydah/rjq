@@ -61,6 +61,10 @@ module Rjq
     def disasm
       lines = []
       append_disasm(lines, instructions, 'main', 0)
+      definitions.each do |definition|
+        append_disasm(lines, definition.body.instructions,
+                      "definition:#{definition.name}/#{definition.params.length}", 0)
+      end
       lines.join("\n")
     end
 

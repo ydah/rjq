@@ -248,7 +248,8 @@ module Rjq
     end
 
     def instruction(op, arg1 = nil, arg2 = nil, loc: nil)
-      location = loc || @current_nodes.last&.source_span || AST::SourceSpan.new(
+      inherited_location = @current_nodes.reverse_each.lazy.filter_map(&:source_span).first
+      location = loc || inherited_location || AST::SourceSpan.new(
         filename: '<top-level>', line: 1, column: 1, start_offset: 0, end_offset: 0
       )
       Instruction.new(op: op, arg1: arg1, arg2: arg2, loc: location)

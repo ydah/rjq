@@ -42,6 +42,9 @@ RSpec.describe Rjq do
         { 'file' => File.realpath(module_path), 'line' => 2 },
         { 'file' => File.realpath(module_path), 'line' => 4 }
       ])
+
+      disassembly = described_class.compile('include "where"; where', library_path: [dir]).disasm
+      expect(disassembly).to include('== definition:where/0 ==', "@ #{File.realpath(module_path)}:2:")
     end
   end
 

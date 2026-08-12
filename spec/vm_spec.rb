@@ -35,6 +35,19 @@ RSpec.describe Rjq::VM do
     expect(compiled.disasm).to include('@ /tmp/filter.jq:2:1', '@ /tmp/filter.jq:3:1')
   end
 
+  it 'inherits source locations for generated instructions and disassembles definitions' do
+    compiled = Rjq.compile("\ndef local:\n  if true then .foo else . end;\nlocal",
+                           source_path: '/tmp/filter.jq')
+    definition = compiled.program.definitions.find { |item| item.name == 'local' }
+
+    expect(definition.body.instructions).not_to be_empty
+    expect(definition.body.instructions.map(&:loc)).to all(be_a(Rjq::AST::SourceSpan))
+    expect(definition.body.instructions.flat_map do |instruction|
+      instruction.arg1.is_a?(Rjq::BytecodeBlock) ? instruction.arg1.instructions : []
+    end.map(&:loc)).to all(be_a(Rjq::AST::SourceSpan))
+    expect(compiled.disasm).to include('== definition:local/0 ==', '@ /tmp/filter.jq:3:')
+  end
+
   it 'compiles simple path filters into bytecode instructions' do
     program = Rjq.compile('.foo | .[]')
 
