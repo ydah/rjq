@@ -413,9 +413,8 @@ module Rjq
       return alternative_stream(blocks, input, context) if op == '//'
       return boolean_stream(op, blocks, input, context) if %w[and or].include?(op)
 
-      left_values = replayable_stream(each_block(blocks[0].instructions, input, context))
       flat_map_stream(each_block(blocks[1].instructions, input, context)) do |right|
-        map_stream(left_values.call) { |left| apply_binary(op, left, right) }
+        map_stream(each_block(blocks[0].instructions, input, context)) { |left| apply_binary(op, left, right) }
       end
     end
 

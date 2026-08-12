@@ -281,6 +281,13 @@ RSpec.describe Rjq do
     expect(values).to eq([11, 12])
   end
 
+  it 're-evaluates effectful left operands for each generated right operand' do
+    io = StringIO.new('1 2 3 4 5 6')
+
+    expect(described_class.run_stream('(input,input)+(10,20)', io: io, opts: { null_input: true }).to_a)
+      .to eq([11, 12, 23, 24])
+  end
+
   it 'branches assignment results for each compound right-hand output' do
     input = { 'a' => 1, 'b' => 2 }
     expect(described_class.run('(.a,.b) += (10,20)', input).to_a)
