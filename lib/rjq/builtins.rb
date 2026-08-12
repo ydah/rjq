@@ -602,9 +602,11 @@ module Rjq
       case name
       when 'pow' then values[0]**values[1]
       when 'atan2' then Math.atan2(values[0], values[1])
-      when 'ldexp', 'scalb', 'scalbln' then Math.ldexp(values[0], values[1].to_i)
-      when 'fma' then (values[0] * values[1]) + values[2]
-      when 'drem' then values[0].remainder(values[1])
+      when 'ldexp' then Math.ldexp(values[0], values[1].to_i)
+      when 'scalb' then MathFunctions.scalb(values[0], values[1])
+      when 'scalbln' then MathFunctions.scalbln(values[0], values[1])
+      when 'fma' then MathFunctions.fma(values[0], values[1], values[2])
+      when 'drem' then MathFunctions.remainder(values[0], values[1])
       when 'copysign' then copy_sign(values[0], values[1])
       when 'fdim' then values.any? { |value| value.to_f.nan? } ? Float::NAN : [values[0] - values[1], 0].max
       when 'fmax' then float_extreme(values[0], values[1], :max)
@@ -613,7 +615,7 @@ module Rjq
       when 'hypot' then Math.hypot(values[0], values[1])
       when 'jn', 'yn' then MathFunctions.bessel(name, values[0].to_i, values[1])
       when 'nextafter', 'nexttoward' then next_float_toward(values[0], values[1])
-      when 'remainder' then ieee_remainder(values[0], values[1])
+      when 'remainder' then MathFunctions.remainder(values[0], values[1])
       end
     rescue Math::DomainError, FloatDomainError, ZeroDivisionError
       Float::NAN

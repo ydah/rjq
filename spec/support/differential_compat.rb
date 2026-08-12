@@ -118,6 +118,16 @@ module DifferentialCompat
     Case.new(name: 'math domain', filter: '-1 | sqrt | isnan', input: '', flags: ['-n']),
     Case.new(name: 'math functions',
              filter: '[fmax(nan;2),fmin(nan;2),fdim(5;2),copysign(2;-0),hypot(3;4)]', input: '', flags: ['-n']),
+    (Case.new(name: 'fused multiply add',
+              filter: '[fma(1e308;1e-308;-1),(1e308*1e-308-1)]', input: '', flags: ['-n']) if
+      Rjq::MathFunctions.native_available?(:fma)),
+    Case.new(name: 'IEEE drem semantics',
+             filter: '[drem(5.3;2),drem(-5.3;2),drem(5;2),drem(7;2),drem(6;4),' \
+                     'drem(2;infinite),drem(-0;2)]', input: '', flags: ['-n']),
+    Case.new(name: 'scaling fractional and nonfinite exponents',
+             filter: '[scalb(3;1.9),scalb(3;-1.9),scalbln(3;1.9),scalb(2;nan),' \
+                     'scalb(2;infinite),scalb(2;-infinite),scalbln(2;nan),' \
+                     'scalbln(2;infinite),scalbln(2;-infinite)]', input: '', flags: ['-n']),
     Case.new(name: 'nearest-even rounding', filter: '[(0.5|nearbyint),(1.5|nearbyint),(-0.5|rint)]',
              input: '', flags: ['-n']),
     Case.new(name: 'UTC mktime', filter: '0 | gmtime | mktime', input: '', flags: ['-n']),
@@ -187,7 +197,7 @@ module DifferentialCompat
     Case.new(name: 'negative combinations', filter: '[1,2] | combinations(-1)', input: '', flags: ['-n']),
     Case.new(name: 'unknown function without input', filter: 'does_not_exist', input: '', flags: []),
     Case.new(name: 'invalid builtin arity', filter: 'length(1)', input: '', flags: ['-n'])
-  ].freeze
+  ].compact.freeze
 
   module_function
 

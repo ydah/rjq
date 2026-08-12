@@ -10,6 +10,12 @@ module Rjq
       'libm.so',
       'libm.dylib'
     ].freeze
+    NATIVE_SIGNATURES = {
+      fma: 'double fma(double, double, double)',
+      remainder: 'double remainder(double, double)',
+      scalb: 'double scalb(double, double)',
+      scalbln: 'double scalbln(double, long)'
+    }.freeze
 
     module_function
 
@@ -19,6 +25,97 @@ module Rjq
       else
         bessel_library.public_send(name, values.fetch(0).to_f)
       end
+    end
+
+    def fma(left, right, addend)
+      library = native_library(:fma)
+      return library.fma(left.to_f, right.to_f, addend.to_f) if library
+
+      (left * right) + addend
+    end
+
+    def remainder(left, right)
+      library = native_library(:remainder)
+      return library.remainder(left.to_f, right.to_f) if library
+
+      portable_remainder(left.to_f, right.to_f)
+    end
+
+    def scalb(value, exponent)
+      library = native_library(:scalb)
+      return library.scalb(value.to_f, exponent.to_f) if library
+
+      portable_scalb(value.to_f, exponent.to_f)
+    end
+
+    def scalbln(value, exponent)
+      integral_exponent = c_long_exponent(exponent.to_f)
+      library = native_library(:scalbln)
+      return library.scalbln(value.to_f, integral_exponent) if library
+
+      Math.ldexp(value.to_f, integral_exponent)
+    rescue RangeError
+      integral_exponent.negative? ? copy_zero_sign(value) : copy_infinity_sign(value)
+    end
+
+    def native_available?(name)
+      !native_library(name).nil?
+    end
+
+    def native_library(name)
+      @native_libraries ||= {}
+      return @native_libraries[name] if @native_libraries.key?(name)
+
+      signature = NATIVE_SIGNATURES.fetch(name)
+      @native_libraries[name] = CANDIDATE_LIBRARIES.lazy.filter_map do |library|
+        build_native_library(library, signature)
+      rescue Fiddle::DLError
+        nil
+      end.first
+    end
+
+    def build_native_library(library, signature)
+      Module.new do
+        extend Fiddle::Importer
+
+        dlload library
+        extern signature
+      end
+    end
+
+    def portable_remainder(left, right)
+      return Float::NAN if left.nan? || right.nan? || right.zero? || left.infinite?
+      return left if right.infinite?
+
+      quotient = (left / right).round(half: :even)
+      result = left - (right * quotient)
+      result.zero? && left.negative? ? -0.0 : result
+    end
+
+    def portable_scalb(value, exponent)
+      return Float::NAN if exponent.nan?
+
+      Math.ldexp(value, c_long_exponent(exponent))
+    rescue RangeError
+      exponent.negative? ? copy_zero_sign(value) : copy_infinity_sign(value)
+    end
+
+    def c_long_exponent(value)
+      bits = Fiddle::SIZEOF_LONG * 8
+      minimum = -(1 << (bits - 1))
+      maximum = (1 << (bits - 1)) - 1
+      return 0 if value.nan?
+      return value.positive? ? maximum : minimum if value.infinite?
+
+      [[value.to_i, minimum].max, maximum].min
+    end
+
+    def copy_zero_sign(value)
+      value.negative? ? -0.0 : 0.0
+    end
+
+    def copy_infinity_sign(value)
+      value.negative? ? -Float::INFINITY : Float::INFINITY
     end
 
     def bessel_library

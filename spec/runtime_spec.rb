@@ -232,6 +232,30 @@ RSpec.describe Rjq do
       .to eq([[0, 2, 2, -0.0]])
   end
 
+  it 'uses jq fused, IEEE remainder, and scaling semantics' do
+    fused = described_class.run('[fma(1e308;1e-308;-1),(1e308*1e-308-1)]', nil).to_a.fetch(0)
+    if Rjq::MathFunctions.native_available?(:fma)
+      expect(fused).to eq([-7.969431103331108e-17, -1.1102230246251565e-16])
+    else
+      expect(fused[0]).to eq(fused[1])
+    end
+
+    remainders = described_class.run(
+      '[drem(5.3;2),drem(-5.3;2),drem(5;2),drem(7;2),drem(6;4),drem(2;infinite),drem(-0;2)]', nil
+    ).to_a.fetch(0)
+    expect(remainders[0..5]).to eq([-0.7000000000000002, 0.7000000000000002, 1, -1, -2, 2])
+    expect(1.0 / remainders[6]).to eq(-Float::INFINITY)
+
+    scaling = described_class.run(
+      '[scalb(3;1.9),scalb(3;-1.9),scalbln(3;1.9),scalb(2;nan),' \
+      'scalb(2;infinite),scalb(2;-infinite),scalbln(2;nan),' \
+      'scalbln(2;infinite),scalbln(2;-infinite)]', nil
+    ).to_a.fetch(0)
+    expect(scaling[0..2]).to eq([6, 1.5, 6])
+    expect(scaling[3]).to be_nan
+    expect(scaling[4..]).to eq([Float::INFINITY, 0, 2, Float::INFINITY, 0])
+  end
+
   it 'keeps date conversion independent of the host timezone' do
     expect(described_class.run('[0 | gmtime | mktime]', nil).to_a).to eq([[0]])
     expect(described_class.run('"2015-03-05T23:51:47Z" | strptime("%Y-%m-%dT%H:%M:%SZ")', nil).to_a)
