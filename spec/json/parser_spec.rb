@@ -46,4 +46,47 @@ RSpec.describe Rjq::JSON::Parser do
   it 'supports RFC 7464 record separators' do
     expect(described_class.parse("\x1e1\x1e2", seq: true).to_a).to eq([1, 2])
   end
+
+  it 'can resynchronize malformed JSON text sequences' do
+    errors = []
+    input = "\x1e1\n\x1ex\n\x1e2\n"
+
+    values = described_class.parse(input, seq: true, on_error: ->(message) { errors << message }).to_a
+
+    expect(values).to eq([1, 2])
+    expect(errors.length).to eq(1)
+    expect(errors.first).to include('expected number')
+  end
+
+  it 'reads IO incrementally and stops when the consumer stops' do
+    io = Class.new do
+      attr_reader :reads
+
+      def initialize(value)
+        @io = StringIO.new(value)
+        @reads = []
+      end
+
+      def read(length)
+        @reads << length
+        @io.read(length)
+      end
+    end.new("1 #{'0' * 100_000}")
+
+    expect(described_class.parse(io, chunk_size: 2).first).to eq(1)
+    expect(io.reads).to eq([2])
+  end
+
+  it 'parses UTF-8 split across chunk boundaries' do
+    expect(described_class.parse(StringIO.new('"😀"'), chunk_size: 2).to_a).to eq(['😀'])
+  end
+
+  it 'parses a byte-order mark split across chunk boundaries' do
+    expect(described_class.parse(StringIO.new("\xEF\xBB\xBF1".b), chunk_size: 1).to_a).to eq([1])
+  end
+
+  it 'reports invalid UTF-8 from an IO as a JSON parse error' do
+    expect { described_class.parse(StringIO.new("\xFF".b), chunk_size: 1).to_a }
+      .to raise_error(Rjq::JSONParseError, /invalid UTF-8/)
+  end
 end

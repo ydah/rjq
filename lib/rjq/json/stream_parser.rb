@@ -14,31 +14,30 @@ module Rjq
       end
 
       class << self
-        def parse(io_or_string, seq: false, stream_errors: false)
-          input = io_or_string.respond_to?(:read) ? io_or_string.read : io_or_string.to_s
-          new(input, seq: seq, stream_errors: stream_errors).parse
+        def parse(io_or_string, seq: false, stream_errors: false, chunk_size: InputBuffer::DEFAULT_CHUNK_SIZE,
+                  on_error: nil)
+          new(io_or_string, seq: seq, stream_errors: stream_errors, chunk_size: chunk_size,
+                            on_error: on_error).parse
         end
       end
 
-      def initialize(input, seq: false, stream_errors: false)
-        @input = input.to_s.encode(Encoding::UTF_8)
-        raise JSONParseError, 'invalid UTF-8 input' unless @input.valid_encoding?
-
-        @input = @input.delete_prefix("\uFEFF")
+      def initialize(input, seq: false, stream_errors: false, chunk_size: InputBuffer::DEFAULT_CHUNK_SIZE,
+                     on_error: nil)
+        @input = InputBuffer.new(input, chunk_size: chunk_size)
         @seq = seq
         @stream_errors = stream_errors
+        @on_error = on_error
         @index = 0
-        @events = []
-      rescue EncodingError => e
-        raise JSONParseError, e.message
+        @line = 1
+        @column = 1
+        advance if current == "\uFEFF"
       end
 
       def parse
-        parse_values
-      rescue StreamError => e
-        raise JSONParseError, e.message unless @stream_errors
-
-        @events + [[e.message, e.path]]
+        Enumerator.new do |yielder|
+          @events = yielder
+          parse_values
+        end
       end
 
       private
@@ -48,10 +47,24 @@ module Rjq
           skip_separators
           break if eof?
 
-          result = parse_value([])
-          skip_whitespace
-          commit(result)
-          raise_error('expected record separator', []) if @seq && !eof? && current != "\x1e"
+          begin
+            result = parse_value([])
+            skip_whitespace
+            commit(result)
+            raise_error('expected record separator', []) if @seq && !eof? && current != "\x1e"
+            @input.discard_before(@index)
+          rescue StreamError => e
+            if @stream_errors
+              @events << [e.message, e.path]
+            elsif @seq && @on_error
+              @on_error.call(e.message)
+            else
+              raise JSONParseError, e.message
+            end
+            break unless @seq
+
+            resync_to_record_separator
+          end
         end
         @events
       end
@@ -219,7 +232,7 @@ module Rjq
         if high_surrogate?(codepoint)
           raise_error('missing low surrogate', []) unless @input[@index, 2] == '\\u'
 
-          @index += 2
+          2.times { advance }
           low = read_hex4
           raise_error('invalid low surrogate', []) unless low_surrogate?(low)
 
@@ -273,7 +286,7 @@ module Rjq
           raise_error(eof? ? 'Invalid literal at EOF' : 'Invalid literal', path)
         end
 
-        @index += literal.length
+        literal.length.times { advance }
         if atom_char?(current)
           scan_invalid_token
           raise_error(eof? ? 'Invalid literal at EOF' : 'Invalid literal', path)
@@ -288,7 +301,7 @@ module Rjq
         chars = @input[@index, 4]
         raise_error('invalid unicode escape', []) unless chars&.match?(/\A[0-9a-fA-F]{4}\z/)
 
-        @index += 4
+        4.times { advance }
         chars.to_i(16)
       end
 
@@ -309,6 +322,11 @@ module Rjq
         end
       end
 
+      def resync_to_record_separator
+        advance until eof? || current == "\x1e"
+        @input.discard_before(@index)
+      end
+
       def skip_whitespace
         advance while current&.match?(/[ \t\r\n]/)
       end
@@ -320,7 +338,7 @@ module Rjq
         if current == '"'
           begin
             parse_string
-            @index -= 1 unless @index.zero?
+            rewind_one unless @index.zero?
           rescue StreamError
             nil
           end
@@ -331,7 +349,7 @@ module Rjq
       end
 
       def scan_invalid_token
-        advance while current && !current.match?(/[,\]\s}]/)
+        advance while current && !current.match?(/[,\]\s}\x1e]/)
       end
 
       def invalid_numeric_literal(path)
@@ -346,14 +364,25 @@ module Rjq
       def consume?(char)
         return false unless current == char
 
-        @index += char.length
+        advance
         true
       end
 
       def advance
         char = current
         @index += char.length
+        if char == "\n"
+          @line += 1
+          @column = 1
+        else
+          @column += 1
+        end
         char
+      end
+
+      def rewind_one
+        @index -= 1
+        @column -= 1
       end
 
       def current
@@ -361,7 +390,7 @@ module Rjq
       end
 
       def eof?
-        @index >= @input.length
+        current.nil?
       end
 
       def digit?(char)
@@ -377,13 +406,11 @@ module Rjq
       end
 
       def line_number
-        @input[0...@index].count("\n") + 1
+        @line
       end
 
       def column_number
-        line_start = @input.rindex("\n", @index - 1) || -1
-        column = @index - line_start
-        eof? ? [column - 1, 1].max : column
+        eof? ? [@column - 1, 1].max : @column
       end
     end
   end

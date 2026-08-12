@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'tmpdir'
 
 RSpec.describe Rjq::CLI do
   it 'runs a compact-output filter against stdin' do
@@ -38,6 +39,108 @@ RSpec.describe Rjq::CLI do
 
     expect(code).to eq(0)
     expect(out.string).to eq("[1,2,3]\n")
+  end
+
+  it 'treats multiple files as one logical input stream' do
+    Dir.mktmpdir do |dir|
+      first = File.join(dir, 'first.json')
+      second = File.join(dir, 'second.json')
+      File.write(first, "1\n")
+      File.write(second, "2\n3\n")
+      out = StringIO.new
+
+      code = described_class.new(['-c', 'inputs', first, second], stdin: StringIO.new, stdout: out,
+                                                                   stderr: StringIO.new).run
+
+      expect(code).to eq(0)
+      expect(out.string).to eq("2\n3\n")
+    end
+  end
+
+  it 'slurps JSON and raw input globally across files' do
+    Dir.mktmpdir do |dir|
+      first = File.join(dir, 'first')
+      second = File.join(dir, 'second')
+      File.write(first, "1\n")
+      File.write(second, "2\n")
+
+      json_out = StringIO.new
+      json_code = described_class.new(['-sc', '.', first, second], stdin: StringIO.new, stdout: json_out,
+                                                                  stderr: StringIO.new).run
+      raw_out = StringIO.new
+      raw_code = described_class.new(['-Rsrc', '.', first, second], stdin: StringIO.new, stdout: raw_out,
+                                                                    stderr: StringIO.new).run
+
+      expect(json_code).to eq(0)
+      expect(json_out.string).to eq("[1,2]\n")
+      expect(raw_code).to eq(0)
+      expect(raw_out.string).to eq("1\n2\n\n")
+    end
+  end
+
+  it 'runs null-input once without opening files unless input is requested' do
+    missing = File.join(Dir.tmpdir, "rjq-missing-#{Process.pid}")
+    out = StringIO.new
+
+    code = described_class.new(['-nc', '.', missing], stdin: StringIO.new, stdout: out,
+                                                       stderr: StringIO.new).run
+
+    expect(code).to eq(0)
+    expect(out.string).to eq("null\n")
+
+    err = StringIO.new
+    code = described_class.new(['-nc', 'input', missing], stdin: StringIO.new, stdout: StringIO.new,
+                                                           stderr: err).run
+    expect(code).to eq(2)
+    expect(err.string).to include('No such file')
+  end
+
+  it 'accepts a dash as stdin among input files' do
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, 'input.json')
+      File.write(path, "1\n")
+      out = StringIO.new
+
+      code = described_class.new(['-c', '.', path, '-'], stdin: StringIO.new("2\n"), stdout: out,
+                                                            stderr: StringIO.new).run
+
+      expect(code).to eq(0)
+      expect(out.string).to eq("1\n2\n")
+    end
+  end
+
+  it 'preserves earlier output when a later file has invalid JSON' do
+    Dir.mktmpdir do |dir|
+      first = File.join(dir, 'first.json')
+      second = File.join(dir, 'second.json')
+      File.write(first, "1\n")
+      File.write(second, '{')
+      out = StringIO.new
+      err = StringIO.new
+
+      code = described_class.new(['-c', '.', first, second], stdin: StringIO.new, stdout: out, stderr: err).run
+
+      expect(code).to eq(5)
+      expect(out.string).to eq("1\n")
+      expect(err.string).to include('JSON parse error')
+    end
+  end
+
+  it 'tracks input filenames and line numbers across files and input calls' do
+    Dir.mktmpdir do |dir|
+      first = File.join(dir, 'first.json')
+      second = File.join(dir, 'second.json')
+      File.write(first, "1\n2\n")
+      File.write(second, "3\n")
+      out = StringIO.new
+
+      filter = '[input, input_filename, input_line_number, input, input_filename, input_line_number]'
+      code = described_class.new(['-nc', filter, first, second], stdin: StringIO.new, stdout: out,
+                                                               stderr: StringIO.new).run
+
+      expect(code).to eq(0)
+      expect(out.string).to eq("[1,\"#{first}\",1,2,\"#{first}\",2]\n")
+    end
   end
 
   it 'prints debug output to stderr and passes through input' do
@@ -181,6 +284,18 @@ RSpec.describe Rjq::CLI do
     expect(code).to eq(5)
     expect(out.string).to eq('')
     expect(err.string).to include('rjq: JSON parse error: Unfinished JSON term at EOF at line 1, column 5')
+  end
+
+  it 'warns and continues after malformed JSON sequence records' do
+    out = StringIO.new
+    err = StringIO.new
+    input = "\x1e1\n\x1ex\n\x1e2\n"
+
+    code = described_class.new(['-c', '--seq', '.'], stdin: StringIO.new(input), stdout: out, stderr: err).run
+
+    expect(code).to eq(0)
+    expect(out.string).to eq("\x1e1\n\x1e2\n")
+    expect(err.string).to include('rjq: ignoring parse error:')
   end
 
   it 'consumes --args after the filter like jq' do

@@ -490,6 +490,10 @@ module Rjq
         return user_function_stream(input, context, context.functions.fetch([name, arg_blocks.length]), arg_blocks)
       end
 
+      if name == 'inputs' && arg_blocks.empty? && context.options[:input_queue]
+        return context.options.fetch(:input_queue).each_remaining
+      end
+
       builtin_args = arg_blocks.map { |block| BytecodeFilter.new(self, block) }
       deferred_values_stream { Builtins.call(name, input, context, builtin_args) }
     end

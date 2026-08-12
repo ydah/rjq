@@ -92,6 +92,37 @@ RSpec.describe Rjq do
     expect(described_class.run_stream('.', io: io, opts: { null_input: true }).to_a).to eq([nil])
   end
 
+  it 'stops reading inputs when a downstream filter has enough values' do
+    io_class = Class.new(StringIO) do
+      attr_reader :reads
+
+      def initialize(content)
+        super
+        @reads = 0
+      end
+
+      def read(length = nil, buffer = nil)
+        @reads += 1
+        super
+      end
+    end
+    io = io_class.new("1 2 3 4 5")
+
+    result = described_class.run_stream('first(inputs)', io: io,
+                                                         opts: { null_input: true, input_chunk_size: 2 }).to_a
+
+    expect(result).to eq([1])
+    expect(io.pos).to be < io.size
+  end
+
+  it 'closes owned input streams when a consumer stops early' do
+    io = StringIO.new("1\n2\n")
+    runtime = Rjq::Runtime.new('.')
+
+    expect(runtime.run_io_streams([[io, 'input.json', true]]).take(1)).to eq([1])
+    expect(io).to be_closed
+  end
+
   it 'orders NaN like jq comparisons and sorting' do
     result = described_class.run(
       '[nan < 1, 1 > nan, ([nan,1] | sort | map(isnan)), ([nan,1] | min | isnan), ([nan,1] | max)]',

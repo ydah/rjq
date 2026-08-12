@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require 'stringio'
 require_relative '../rjq'
 
 module Rjq
@@ -83,13 +82,11 @@ module Rjq
       @opts[:color] = @stdout.tty? if @opts[:color].nil?
       last = nil
       count = 0
-      input_io.each do |io, filename|
-        runtime = Runtime.new(@filter || '.', @opts.merge(current_filename: filename))
-        runtime.run_stream(io) do |value|
-          last = value
-          count += 1
-          write_value(runtime, value)
-        end
+      runtime = Runtime.new(@filter || '.', @opts)
+      runtime.run_io_streams(input_streams).each do |value|
+        last = value
+        count += 1
+        write_value(runtime, value)
       end
       return exit_status(last, count) if @opts[:exit_status]
 
@@ -110,7 +107,9 @@ module Rjq
     rescue Rjq::RuntimeError => e
       @stderr.puts("rjq: runtime error: #{e.message}")
       5
-    rescue Errno::ENOENT, Errno::EACCES => e
+    rescue Errno::EPIPE
+      0
+    rescue Errno::ENOENT, Errno::EACCES, Errno::EISDIR => e
       @stderr.puts("rjq: #{e.message}")
       2
     end
@@ -277,10 +276,21 @@ module Rjq
       raise OptionError, 'rjq: --indent must be an integer'
     end
 
-    def input_io
-      return [[@stdin, nil]] if @files.empty?
+    def input_streams
+      Enumerator.new do |yielder|
+        if @files.empty?
+          yielder << [@stdin, nil, false]
+          next
+        end
 
-      @files.map { |file| [StringIO.new(File.read(file)), file] }
+        @files.each do |file|
+          if file == '-'
+            yielder << [@stdin, nil, false]
+          else
+            yielder << [File.open(file, 'rb'), file, true]
+          end
+        end
+      end
     end
 
     def write_value(runtime, value)

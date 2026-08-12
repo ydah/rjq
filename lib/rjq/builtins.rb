@@ -123,9 +123,10 @@ module Rjq
       when 'inputs'
         inputs_builtin(context)
       when 'input_filename'
-        [context.options.fetch(:current_filename, '<stdin>') || '<stdin>']
+        filename = current_input_record(context)&.filename || context.options.fetch(:current_filename, '<stdin>')
+        [filename || '<stdin>']
       when 'input_line_number'
-        [context.options.fetch(:current_line, 1)]
+        [current_input_record(context)&.line || context.options.fetch(:current_line, 1)]
       when 'debug', 'stderr'
         emit_diagnostic(name, input, context)
       when 'null'
@@ -416,13 +417,13 @@ module Rjq
 
     def inputs_builtin(context)
       queue = context.options[:input_queue]
-      if queue
-        values = queue.dup
-        queue.clear
-        return values
-      end
+      return queue.remaining_values if queue
 
       context.options.fetch(:remaining_inputs, [])
+    end
+
+    def current_input_record(context)
+      context.options[:input_queue]&.current_record
     end
 
     def emit_diagnostic(name, input, context)
