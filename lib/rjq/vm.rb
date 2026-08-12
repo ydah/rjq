@@ -232,9 +232,13 @@ module Rjq
 
     def slice_filter_stream(values, spec, input, context)
       Enumerator.new do |yielder|
-        start_index = spec[:start] ? each_block(spec.fetch(:start).instructions, input, context).first : nil
-        finish_index = spec[:finish] ? each_block(spec.fetch(:finish).instructions, input, context).first : nil
-        values.each { |value| yielder << read_slice(value, start_index, finish_index) }
+        starts = spec[:start] ? each_block(spec.fetch(:start).instructions, input, context).to_a : [nil]
+        finishes = spec[:finish] ? each_block(spec.fetch(:finish).instructions, input, context).to_a : [nil]
+        values.each do |value|
+          starts.each do |start_index|
+            finishes.each { |finish_index| yielder << read_slice(value, start_index, finish_index) }
+          end
+        end
       end
     end
 
@@ -374,25 +378,37 @@ module Rjq
 
     def reduce_stream(spec, input, context)
       Enumerator.new do |yielder|
-        acc = each_block(spec.fetch(:initial).instructions, input, context).first
+        accumulators = each_block(spec.fetch(:initial).instructions, input, context).to_a
         each_block(spec.fetch(:generator).instructions, input, context).each do |value|
-          acc = each_block(spec.fetch(:update).instructions, acc,
-                           AST.bind_pattern(context, spec.fetch(:pattern), value)).first
+          ctx = AST.bind_pattern(context, spec.fetch(:pattern), value)
+          accumulators = accumulators.flat_map do |accumulator|
+            each_block(spec.fetch(:update).instructions, accumulator, ctx).to_a
+          end
         end
-        yielder << acc
+        accumulators.each { |accumulator| yielder << accumulator }
       end
     end
 
     def foreach_stream(spec, input, context)
       Enumerator.new do |yielder|
-        acc = each_block(spec.fetch(:initial).instructions, input, context).first
-        each_block(spec.fetch(:generator).instructions, input, context).each do |value|
-          ctx = AST.bind_pattern(context, spec.fetch(:pattern), value)
-          acc = each_block(spec.fetch(:update).instructions, acc, ctx).first
-          values = spec[:extract] ? each_block(spec.fetch(:extract).instructions, acc, ctx) : value_stream(acc)
-          values.each { |item| yielder << item }
-        rescue BreakSignal => e
-          raise BreakSignal.new(e.label, e.value, outputs: e.outputs)
+        each_block(spec.fetch(:initial).instructions, input, context).each do |initial|
+          accumulators = [initial]
+          each_block(spec.fetch(:generator).instructions, input, context).each do |value|
+            ctx = AST.bind_pattern(context, spec.fetch(:pattern), value)
+            accumulators = accumulators.flat_map do |accumulator|
+              each_block(spec.fetch(:update).instructions, accumulator, ctx).to_a
+            end
+            accumulators.each do |accumulator|
+              values = if spec[:extract]
+                         each_block(spec.fetch(:extract).instructions, accumulator, ctx)
+                       else
+                         value_stream(accumulator)
+                       end
+              values.each { |item| yielder << item }
+            end
+          rescue BreakSignal => e
+            raise BreakSignal.new(e.label, e.value, outputs: e.outputs)
+          end
         end
       end
     end
@@ -449,19 +465,12 @@ module Rjq
     end
 
     def boolean_stream(op, blocks, input, context)
-      Enumerator.new do |yielder|
-        left = each_block(blocks[0].instructions, input, context).any? { |value| Value.truthy?(value) }
-        if op == 'and' && !left
-          yielder << false
-          next
+      flat_map_stream(each_block(blocks[0].instructions, input, context)) do |left|
+        if (op == 'and' && !Value.truthy?(left)) || (op == 'or' && Value.truthy?(left))
+          value_stream(op == 'or')
+        else
+          map_stream(each_block(blocks[1].instructions, input, context)) { |right| Value.truthy?(right) }
         end
-        if op == 'or' && left
-          yielder << true
-          next
-        end
-
-        right = each_block(blocks[1].instructions, input, context).any? { |value| Value.truthy?(value) }
-        yielder << (op == 'and' ? (left && right) : (left || right))
       end
     end
 
@@ -509,9 +518,11 @@ module Rjq
     end
 
     def execute_slice_filter(values, spec, input, context)
-      start_index = spec[:start] ? execute_filter(spec[:start], input, context).first : nil
-      finish_index = spec[:finish] ? execute_filter(spec[:finish], input, context).first : nil
-      values.flat_map { |value| [read_slice(value, start_index, finish_index)] }
+      starts = spec[:start] ? execute_filter(spec[:start], input, context) : [nil]
+      finishes = spec[:finish] ? execute_filter(spec[:finish], input, context) : [nil]
+      values.flat_map do |value|
+        starts.flat_map { |start_index| finishes.map { |finish_index| read_slice(value, start_index, finish_index) } }
+      end
     end
 
     def execute_optional(block, input, context)
@@ -588,22 +599,29 @@ module Rjq
     end
 
     def execute_reduce(spec, input, context)
-      acc = execute_filter(spec.fetch(:initial), input, context).first
+      accumulators = execute_filter(spec.fetch(:initial), input, context)
       execute_filter(spec.fetch(:generator), input, context).each do |value|
-        acc = execute_filter(spec.fetch(:update), acc, AST.bind_pattern(context, spec.fetch(:pattern), value)).first
+        ctx = AST.bind_pattern(context, spec.fetch(:pattern), value)
+        accumulators = accumulators.flat_map { |accumulator| execute_filter(spec.fetch(:update), accumulator, ctx) }
       end
-      [acc]
+      accumulators
     end
 
     def execute_foreach(spec, input, context)
-      acc = execute_filter(spec.fetch(:initial), input, context).first
       out = []
-      execute_filter(spec.fetch(:generator), input, context).each do |value|
-        ctx = AST.bind_pattern(context, spec.fetch(:pattern), value)
-        acc = execute_filter(spec.fetch(:update), acc, ctx).first
-        out.concat(spec[:extract] ? execute_filter(spec.fetch(:extract), acc, ctx) : [acc])
-      rescue BreakSignal => e
-        raise BreakSignal.new(e.label, e.value, outputs: out + Array(e.outputs))
+      execute_filter(spec.fetch(:initial), input, context).each do |initial|
+        accumulators = [initial]
+        execute_filter(spec.fetch(:generator), input, context).each do |value|
+          ctx = AST.bind_pattern(context, spec.fetch(:pattern), value)
+          accumulators = accumulators.flat_map do |accumulator|
+            execute_filter(spec.fetch(:update), accumulator, ctx)
+          end
+          accumulators.each do |accumulator|
+            out.concat(spec[:extract] ? execute_filter(spec.fetch(:extract), accumulator, ctx) : [accumulator])
+          end
+        rescue BreakSignal => e
+          raise BreakSignal.new(e.label, e.value, outputs: out + Array(e.outputs))
+        end
       end
       out
     end
@@ -653,12 +671,13 @@ module Rjq
     end
 
     def execute_boolean(op, blocks, input, context)
-      left = execute_filter(blocks[0], input, context).any? { |value| Value.truthy?(value) }
-      return [false] if op == 'and' && !left
-      return [true] if op == 'or' && left
-
-      right = execute_filter(blocks[1], input, context).any? { |value| Value.truthy?(value) }
-      [op == 'and' ? (left && right) : (left || right)]
+      execute_filter(blocks[0], input, context).flat_map do |left|
+        if (op == 'and' && !Value.truthy?(left)) || (op == 'or' && Value.truthy?(left))
+          [op == 'or']
+        else
+          execute_filter(blocks[1], input, context).map { |right| Value.truthy?(right) }
+        end
+      end
     end
 
     def execute_assignment(spec, input, context)
@@ -725,18 +744,20 @@ module Rjq
       base = instructions[0...-1]
       slice = instructions.last
       paths_for_block(base, input, context).each do |path|
-        target = Path.get(copy, path)
-        start_index, finish_index = slice_bounds(slice, input, context)
-        copy = Path.set(copy, path, replace_slice(target, start_index, finish_index, replacement))
+        slice_bounds(slice, input, context).each do |start_index, finish_index|
+          target = Path.get(copy, path)
+          copy = Path.set(copy, path, replace_slice(target, start_index, finish_index, replacement))
+        end
       end
       copy
     end
 
     def slice_bounds(slice, input, context)
-      return [slice.arg1, slice.arg2] if slice.op == :slice_const
+      return [[slice.arg1, slice.arg2]] if slice.op == :slice_const
 
-      [slice.arg1[:start] ? execute_filter(slice.arg1.fetch(:start), input, context).first : nil,
-       slice.arg1[:finish] ? execute_filter(slice.arg1.fetch(:finish), input, context).first : nil]
+      starts = slice.arg1[:start] ? execute_filter(slice.arg1.fetch(:start), input, context) : [nil]
+      finishes = slice.arg1[:finish] ? execute_filter(slice.arg1.fetch(:finish), input, context) : [nil]
+      starts.product(finishes)
     end
 
     def call_builtin_or_function(instruction, input, context)
@@ -812,19 +833,22 @@ module Rjq
       return Builtins.call(name, input, context, []) unless spec
 
       if spec[:segments]
-        return [spec.fetch(:segments).map { |segment| format_segment(name, segment, input, context) }.join]
+        return spec.fetch(:segments).reduce(['']) do |prefixes, segment|
+          suffixes = format_segment(name, segment, input, context)
+          prefixes.flat_map { |prefix| suffixes.map { |suffix| prefix + suffix } }
+        end
       end
 
       execute_filter(spec.fetch(:block), input, context).flat_map { |value| Builtins.call(name, value, context, []) }
     end
 
     def format_segment(name, segment, input, context)
-      return segment.fetch(:value) if segment.fetch(:kind) == :text
+      return [segment.fetch(:value)] if segment.fetch(:kind) == :text
 
       ctx = context_with_definitions(context, segment.fetch(:definitions))
       execute_filter(segment.fetch(:block), input, ctx).map do |item|
         Builtins.to_string(Builtins.call(name, item, context, []).first)
-      end.join
+      end
     end
 
     def execute_path_instruction(instruction, stack, input, context)
@@ -860,18 +884,15 @@ module Rjq
     end
 
     def slice_paths(paths, input, start_index, finish_index)
-      paths.flat_map do |path|
-        value = Path.get(input, path)
-        raise TypeError, "cannot slice #{Value.type_of(value)}" unless value.is_a?(Array)
-
-        range_for(value.length, start_index, finish_index).map { |index| path + [index] }
-      end
+      paths.map { |path| path + [{ 'start' => start_index, 'end' => finish_index }] }
     end
 
     def slice_filter_paths(paths, spec, input, context)
-      start_index = spec[:start] ? execute_filter(spec.fetch(:start), input, context).first : nil
-      finish_index = spec[:finish] ? execute_filter(spec.fetch(:finish), input, context).first : nil
-      slice_paths(paths, input, start_index, finish_index)
+      starts = spec[:start] ? execute_filter(spec.fetch(:start), input, context) : [nil]
+      finishes = spec[:finish] ? execute_filter(spec.fetch(:finish), input, context) : [nil]
+      starts.product(finishes).flat_map do |start_index, finish_index|
+        slice_paths(paths, input, start_index, finish_index)
+      end
     end
 
     def each_paths(paths, input)
@@ -920,9 +941,8 @@ module Rjq
     def call_paths(instruction, input, context)
       name = instruction.arg1
       arg_blocks = instruction.arg2
-      return [[]] if name == 'select' && arg_blocks.length == 1 && execute_filter(arg_blocks.first, input,
-                                                                                  context).any? do |value|
-        Value.truthy?(value)
+      if name == 'select' && arg_blocks.length == 1
+        return execute_filter(arg_blocks.first, input, context).filter_map { |value| [] if Value.truthy?(value) }
       end
       return [] if (name == 'select' && arg_blocks.length == 1) || (name == 'empty' && arg_blocks.empty?)
       return [[0]] if name == 'first' && arg_blocks.empty?

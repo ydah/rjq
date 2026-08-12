@@ -19,6 +19,16 @@ module DifferentialCompat
     Case.new(name: 'trailing dot', filter: '.foo.', input: '{"foo":1}', flags: []),
     Case.new(name: 'comments', filter: '. # comment', input: '1', flags: []),
     Case.new(name: 'multi-value interpolation', filter: '"x\(1,2)y"', input: '', flags: ['-n']),
+    Case.new(name: 'multi-value format interpolation', filter: '@html "x\(1,2)y"', input: '', flags: ['-n']),
+    Case.new(name: 'decimal literal representation', filter: '.', input: '1.000', flags: []),
+    Case.new(name: 'large exponent representation', filter: '.', input: '1e100', flags: []),
+    Case.new(name: 'computed large exponent', filter: '1e100 + 0', input: '', flags: ['-n']),
+    Case.new(name: 'multi-value boolean', filter: '(true,false) and (true,false)', input: '', flags: ['-n']),
+    Case.new(name: 'multi-value select', filter: '1 | select(true,true)', input: '', flags: ['-n']),
+    Case.new(name: 'multi-value builtin argument', filter: '"abc" | startswith(("a","b"))', input: '', flags: ['-n']),
+    Case.new(name: 'multi-value slice bounds', filter: '.[(0,1):(2,3)]', input: '[0,1,2,3]', flags: []),
+    Case.new(name: 'reduce branches', filter: 'reduce [1,2][] as $x (0,10; . + $x)', input: '', flags: ['-n']),
+    Case.new(name: 'foreach branches', filter: 'foreach [1,2][] as $x (0,10; . + $x; .)', input: '', flags: ['-n']),
     Case.new(name: 'unknown function without input', filter: 'does_not_exist', input: '', flags: []),
     Case.new(name: 'invalid builtin arity', filter: 'length(1)', input: '', flags: ['-n'])
   ].freeze

@@ -42,10 +42,31 @@ module Rjq
     BUILTIN_NAMES = BUILTIN_ARITIES.keys.freeze
     FORMAT_NAMES = %w[@text @json @html @uri @csv @tsv @sh @base64 @base64d @base32 @base32d].freeze
     REGISTRY = BUILTIN_NAMES.to_h { |name| [name, true] }.freeze
+    FILTER_ARGUMENT_POSITIONS = {
+      'IN' => [0, 1], 'INDEX' => [0, 1], 'JOIN' => [1, 2, 3],
+      'any' => [0, 1], 'all' => [0, 1], 'with_entries' => [0], 'select' => [0], 'map' => [0],
+      'map_values' => [0], 'recurse' => [0, 1], 'recurse_down' => [0, 1], 'path' => [0], 'paths' => [0],
+      'leaf_paths' => [0], 'del' => [0], 'pick' => [0], 'walk' => [0], 'fromstream' => [0],
+      'truncate_stream' => [0], 'min_by' => [0], 'max_by' => [0], 'sort_by' => [0], 'group_by' => [0],
+      'GROUP_BY' => [0], 'unique_by' => [0], 'UNIQUE_BY' => [0], 'first' => [0], 'last' => [0], 'nth' => [1],
+      'limit' => [1], 'until' => [0, 1], 'while' => [0, 1], 'repeat' => [0], 'isempty' => [0],
+      'sub' => [1], 'gsub' => [1]
+    }.transform_values(&:freeze).freeze
 
     module_function
 
     def call(name, input, context, args)
+      argument_sets = args.each_with_index.map do |argument, index|
+        if FILTER_ARGUMENT_POSITIONS.fetch(name, []).include?(index)
+          [argument]
+        else
+          argument.eval(input, context).map { |value| AST::Literal.new(value) }
+        end
+      end
+      cartesian(argument_sets).flat_map { |resolved_args| dispatch(name, input, context, resolved_args) }
+    end
+
+    def dispatch(name, input, context, args)
       return call(name, args.fetch(0).eval(input, context).first, context, []) if name.start_with?('@') && !args.empty?
 
       case name
@@ -155,7 +176,7 @@ module Rjq
       when 'select'
         select(input, context, args.fetch(0))
       when 'map'
-        [map_filter(assert_array(input), context, args.fetch(0))]
+        [map_filter(input, context, args.fetch(0))]
       when 'map_values'
         [map_values(input, context, args.fetch(0))]
       when 'to_number', 'tonumber'
@@ -373,9 +394,11 @@ module Rjq
     def has?(container, key)
       case container
       when Array
-        key.is_a?(Integer) && key >= 0 && key < container.length
+        key.is_a?(Numeric) && key.finite? && key >= 0 && key.floor < container.length
       when Hash
-        container.key?(key.to_s)
+        raise TypeError, 'Cannot check whether object has a number key' if key.is_a?(Numeric)
+
+        container.key?(key)
       else
         false
       end
@@ -442,7 +465,9 @@ module Rjq
 
     def flatten(value, depth = nil)
       raise RuntimeError, 'flatten depth must not be negative' if depth&.negative?
-      return value unless value.is_a?(Array)
+      unless value.is_a?(Array)
+        raise TypeError, "Cannot iterate over #{Value.type_of(value)} (#{JSON::Dumper.dump(value, indent: nil)})"
+      end
       return value if depth && depth <= 0
 
       value.flat_map do |item|
@@ -581,19 +606,23 @@ module Rjq
     end
 
     def select(input, context, filter)
-      filter.eval(input, context).any? { |value| Value.truthy?(value) } ? [input] : []
+      filter.eval(input, context).filter_map { |value| input if Value.truthy?(value) }
     end
 
-    def map_filter(array, context, filter)
-      array.flat_map { |item| filter.eval(item, context) }
+    def map_filter(value, context, filter)
+      items = value.is_a?(Hash) ? value.values : assert_array(value)
+      items.flat_map { |item| filter.eval(item, context) }
     end
 
     def map_values(value, context, filter)
       case value
       when Array
-        value.map { |item| filter.eval(item, context).first }
+        value.filter_map { |item| filter.eval(item, context).first }
       when Hash
-        value.each_with_object({}) { |(key, item), out| out[key] = filter.eval(item, context).first }
+        value.each_with_object({}) do |(key, item), out|
+          outputs = filter.eval(item, context)
+          out[key] = outputs.first unless outputs.empty?
+        end
       else
         raise TypeError, "cannot map values of #{Value.type_of(value)}"
       end

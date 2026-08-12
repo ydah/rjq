@@ -19,7 +19,7 @@ module Rjq
         'null'
       when TrueClass, FalseClass
         'boolean'
-      when Integer, Float
+      when Numeric
         'number'
       when String
         'string'
@@ -86,12 +86,9 @@ module Rjq
     end
 
     def numeric_equal?(left, right)
-      return false if left.is_a?(Float) && left.nan?
-      return false if right.is_a?(Float) && right.nan?
-      return left == right if left.is_a?(Integer) && right.is_a?(Integer)
-      return left.to_f.to_s == right.to_f.to_s if unsafe_integer?(left) || unsafe_integer?(right)
+      return false if nan_number?(left) || nan_number?(right)
 
-      left == right
+      numeric_compare(left, right).zero?
     end
     private_class_method :numeric_equal?
 
@@ -106,15 +103,31 @@ module Rjq
     private_class_method :bool_rank
 
     def numeric_compare(left, right)
-      left_nan = left.is_a?(Float) && left.nan?
-      right_nan = right.is_a?(Float) && right.nan?
+      left_nan = nan_number?(left)
+      right_nan = nan_number?(right)
       return 0 if left_nan && right_nan
       return -1 if left_nan
       return 1 if right_nan
 
-      left <=> right
+      return left.decimal_compare(right) if left.is_a?(Number) && right.is_a?(Number)
+      return left.decimal_compare(Number.parse(right.to_s)) if left.is_a?(Number) && right.is_a?(Integer)
+      return -right.decimal_compare(Number.parse(left.to_s)) if left.is_a?(Integer) && right.is_a?(Number)
+
+      comparable_number(left) <=> comparable_number(right)
     end
     private_class_method :numeric_compare
+
+    def nan_number?(value)
+      value.respond_to?(:nan?) && value.nan?
+    end
+    private_class_method :nan_number?
+
+    def comparable_number(value)
+      return value.to_f if value.is_a?(Number) || unsafe_integer?(value)
+
+      value
+    end
+    private_class_method :comparable_number
 
     def compare_arrays(left, right)
       max = [left.length, right.length].min

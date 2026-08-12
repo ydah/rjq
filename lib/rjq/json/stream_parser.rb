@@ -256,11 +256,15 @@ module Rjq
         end
 
         literal = @input[start...@index]
-        return Float(literal) if literal.start_with?('-') && Float(literal).zero?
+        invalid_numeric_literal(path) unless number_delimiter?(current)
 
-        float ? Float(literal) : Integer(literal, 10)
+        Number.parse(literal)
       rescue ArgumentError
         invalid_numeric_literal(path)
+      end
+
+      def number_delimiter?(char)
+        char.nil? || char.match?(/[\s,\]}\x1e]/)
       end
 
       def consume_literal(literal, path)

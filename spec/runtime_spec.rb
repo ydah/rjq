@@ -145,6 +145,41 @@ RSpec.describe Rjq do
     expect(described_class.run('foreach .[] as $x (0; . + $x; .)', [1, 2, 3]).to_a).to eq([1, 3, 6])
   end
 
+  it 'preserves all boolean, select, and builtin argument outputs' do
+    expect(described_class.run('(true,false) and (true,false)', nil).to_a).to eq([true, false, false])
+    expect(described_class.run('1 | select(true,true)', nil).to_a).to eq([1, 1])
+    expect(described_class.run('"abc" | startswith(("a","b"))', nil).to_a).to eq([true, false])
+    expect(described_class.run('[1,2] | has((0,1,2))', nil).to_a).to eq([true, true, false])
+    expect(described_class.run('3 | pow((2,3); (1,2))', nil).to_a).to eq([2, 4, 3, 9])
+    expect(described_class.run('@html "x\(1,2)y"', nil).to_a).to eq(%w[x1y x2y])
+  end
+
+  it 'preserves slice bound and reduce/foreach branches' do
+    expect(described_class.run('.[(0,1):(2,3)]', [0, 1, 2, 3]).to_a)
+      .to eq([[0, 1], [0, 1, 2], [1], [1, 2]])
+    expect(described_class.run('reduce [1,2][] as $x (0,10; . + $x)', nil).to_a).to eq([3, 13])
+    expect(described_class.run('foreach [1,2][] as $x (0,10; . + $x; .)', nil).to_a).to eq([1, 3, 11, 13])
+  end
+
+  it 'uses slice components for paths and assignments' do
+    input = [0, 1, 2, 3]
+    expect(described_class.run('path(.[(0,1):(2,3)])', input).to_a).to eq(
+      [
+        [{ 'start' => 0, 'end' => 2 }], [{ 'start' => 0, 'end' => 3 }],
+        [{ 'start' => 1, 'end' => 2 }], [{ 'start' => 1, 'end' => 3 }]
+      ]
+    )
+    expect(described_class.run('.[(0,1):(2,3)] = [9]', input).to_a).to eq([[9, 9]])
+    expect(described_class.run('setpath([{start:1,end:3}]; [9])', input).to_a).to eq([[0, 9, 3]])
+  end
+
+  it 'maps object values and removes empty map_values results' do
+    expect(described_class.run('map(.+1)', { 'a' => 1, 'b' => 2 }).to_a).to eq([[2, 3]])
+    expect(described_class.run('map_values(empty)', [1, 2]).to_a).to eq([[]])
+    expect(described_class.run('map_values(if . == 1 then empty else . + 1 end)',
+                               { 'a' => 1, 'b' => 2 }).to_a).to eq([{ 'b' => 3 }])
+  end
+
   it 'supports structured bindings' do
     expect(described_class.run('. as {a: $a, b: $b} | $a + $b', { 'a' => 2, 'b' => 5 }).to_a).to eq([7])
     expect(described_class.run('. as [$a, $b] | $a * $b', [3, 4]).to_a).to eq([12])

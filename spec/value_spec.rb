@@ -23,6 +23,15 @@ RSpec.describe Rjq::Value do
     expect(described_class.equal?({ 'a' => 1 }, { 'a' => 1.0 })).to be(true)
   end
 
+  it 'compares untouched large literals exactly and keeps comparison consistent with equality' do
+    left = Rjq::Number.parse('13911860366432393')
+    right = Rjq::Number.parse('13911860366432392')
+
+    expect(described_class.equal?(left, right)).to be(false)
+    expect(described_class.compare(left, right)).to be_positive
+    expect(described_class.equal?(left, right)).to eq(described_class.compare(left, right).zero?)
+  end
+
   it 'treats only null and false as falsey' do
     expect(described_class.truthy?(nil)).to be(false)
     expect(described_class.truthy?(false)).to be(false)

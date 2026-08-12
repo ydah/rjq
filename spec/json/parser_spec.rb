@@ -7,10 +7,15 @@ RSpec.describe Rjq::JSON::Parser do
     expect(described_class.parse("{} 1\n[true]").to_a).to eq([{}, 1, [true]])
   end
 
-  it 'keeps large integer literals as Integer' do
+  it 'keeps the original representation of large numeric literals' do
     value = described_class.parse_one("1#{'0' * 100}")
-    expect(value).to be_a(Integer)
+    expect(value).to be_a(Rjq::Number)
     expect(value.to_s).to eq("1#{'0' * 100}")
+  end
+
+  it 'rejects adjacent JSON atoms that are not separated' do
+    expect { described_class.parse('1true').to_a }.to raise_error(Rjq::JSONParseError)
+    expect { described_class.parse('1-2').to_a }.to raise_error(Rjq::JSONParseError)
   end
 
   it 'keeps negative zero literals' do

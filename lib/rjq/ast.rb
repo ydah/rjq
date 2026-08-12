@@ -214,7 +214,10 @@ module Rjq
         return Builtins.call(@name, input, context, []) unless @expression
 
         if @expression.is_a?(StringLiteral) && @expression.value.is_a?(Array)
-          return [@expression.value.map { |kind, value| format_segment(kind, value, input, context) }.join]
+          return @expression.value.reduce(['']) do |prefixes, (kind, value)|
+            suffixes = format_segment(kind, value, input, context)
+            prefixes.flat_map { |prefix| suffixes.map { |suffix| prefix + suffix } }
+          end
         end
 
         @expression.eval(input, context).flat_map { |value| Builtins.call(@name, value, context, []) }
@@ -223,11 +226,11 @@ module Rjq
       private
 
       def format_segment(kind, value, input, context)
-        return value if kind == :text
+        return [value] if kind == :text
 
         Parser.new(value).parse.eval(input, context).map do |item|
           Builtins.to_string(Builtins.call(@name, item, context, []).first)
-        end.join
+        end
       end
     end
 
@@ -438,30 +441,32 @@ module Rjq
 
       def eval(input, context)
         @base.eval(input, context).flat_map do |value|
-          start = @start_node ? one(@start_node, input, context) : nil
-          finish = @finish_node ? one(@finish_node, input, context) : nil
-          [slice(value, start, finish)]
+          starts = @start_node ? @start_node.eval(input, context) : [nil]
+          finishes = @finish_node ? @finish_node.eval(input, context) : [nil]
+          starts.flat_map { |start| finishes.map { |finish| slice(value, start, finish) } }
         rescue Rjq::RuntimeError
           @optional ? [] : raise
         end
       end
 
       def paths(input, context)
-        value = @base.eval(input, context).first
-        raise TypeError, "cannot slice #{Value.type_of(value)}" unless value.is_a?(Array)
-
-        start = @start_node ? one(@start_node, input, context) : nil
-        finish = @finish_node ? one(@finish_node, input, context) : nil
-        indices = range_for(value.length, start, finish).to_a
-        @base.paths(input, context).flat_map { |path| indices.map { |index| path + [index] } }
+        starts = @start_node ? @start_node.eval(input, context) : [nil]
+        finishes = @finish_node ? @finish_node.eval(input, context) : [nil]
+        @base.paths(input, context).flat_map do |path|
+          starts.flat_map { |start| finishes.map { |finish| path + [{ 'start' => start, 'end' => finish }] } }
+        end
       end
 
       def assign_value(copy, input, context, value)
         @base.paths(input, context).each do |path|
-          target = Path.get(copy, path)
-          start = @start_node ? one(@start_node, input, context) : nil
-          finish = @finish_node ? one(@finish_node, input, context) : nil
-          copy = Path.set(copy, path, replace_slice(target, start, finish, value))
+          starts = @start_node ? @start_node.eval(input, context) : [nil]
+          finishes = @finish_node ? @finish_node.eval(input, context) : [nil]
+          starts.each do |start|
+            finishes.each do |finish|
+              target = Path.get(copy, path)
+              copy = Path.set(copy, path, replace_slice(target, start, finish, value))
+            end
+          end
         end
         copy
       end
@@ -636,11 +641,12 @@ module Rjq
       end
 
       def eval(input, context)
-        acc = @initial.eval(input, context).first
+        accumulators = @initial.eval(input, context)
         @generator.eval(input, context).each do |value|
-          acc = @update.eval(acc, AST.bind_pattern(context, @variable, value)).first
+          ctx = AST.bind_pattern(context, @variable, value)
+          accumulators = accumulators.flat_map { |accumulator| @update.eval(accumulator, ctx) }
         end
-        [acc]
+        accumulators
       end
     end
 
@@ -654,14 +660,16 @@ module Rjq
       end
 
       def eval(input, context)
-        acc = @initial.eval(input, context).first
         out = []
-        @generator.eval(input, context).each do |value|
-          ctx = AST.bind_pattern(context, @variable, value)
-          acc = @update.eval(acc, ctx).first
-          out.concat(@extract ? @extract.eval(acc, ctx) : [acc])
-        rescue BreakSignal => e
-          raise BreakSignal.new(e.label, e.value, outputs: out + (e.outputs || []))
+        @initial.eval(input, context).each do |initial|
+          accumulators = [initial]
+          @generator.eval(input, context).each do |value|
+            ctx = AST.bind_pattern(context, @variable, value)
+            accumulators = accumulators.flat_map { |accumulator| @update.eval(accumulator, ctx) }
+            accumulators.each { |accumulator| out.concat(@extract ? @extract.eval(accumulator, ctx) : [accumulator]) }
+          rescue BreakSignal => e
+            raise BreakSignal.new(e.label, e.value, outputs: out + (e.outputs || []))
+          end
         end
         out
       end
@@ -747,12 +755,13 @@ module Rjq
       end
 
       def eval_boolean(input, context)
-        left = @left.eval(input, context).any? { |value| Value.truthy?(value) }
-        return [false] if @op == 'and' && !left
-        return [true] if @op == 'or' && left
-
-        right = @right.eval(input, context).any? { |value| Value.truthy?(value) }
-        [@op == 'and' ? (left && right) : (left || right)]
+        @left.eval(input, context).flat_map do |left|
+          if (@op == 'and' && !Value.truthy?(left)) || (@op == 'or' && Value.truthy?(left))
+            [@op == 'or']
+          else
+            @right.eval(input, context).map { |right| Value.truthy?(right) }
+          end
+        end
       end
 
       def apply(left, right)

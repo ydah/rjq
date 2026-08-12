@@ -2,6 +2,7 @@
 
 require_relative 'rjq/version'
 require_relative 'rjq/errors'
+require_relative 'rjq/number'
 require_relative 'rjq/value'
 require_relative 'rjq/json/parser'
 require_relative 'rjq/json/stream_parser'

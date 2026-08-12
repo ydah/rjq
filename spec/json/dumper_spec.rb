@@ -32,4 +32,15 @@ RSpec.describe Rjq::JSON::Dumper do
     expect(described_class.dump([Float::INFINITY, -Float::INFINITY, Float::NAN, -0.0], indent: nil))
       .to eq('[1.7976931348623157e+308,-1.7976931348623157e+308,null,-0]')
   end
+
+  it 'preserves untouched decimal literals and normalizes their exponent' do
+    expect(described_class.dump(Rjq::Number.parse('1.000'))).to eq('1.000')
+    expect(described_class.dump(Rjq::Number.parse('1e100'))).to eq('1E+100')
+    expect(described_class.dump(Rjq::Number.parse('123.4e-3'))).to eq('0.1234')
+  end
+
+  it 'uses exponential notation for large computed floats' do
+    expect(described_class.dump(1e16)).to eq('1e+16')
+    expect(described_class.dump(1e100)).to eq('1e+100')
+  end
 end

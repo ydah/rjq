@@ -199,11 +199,15 @@ module Rjq
         end
 
         literal = @input[start...@index]
-        return Float(literal) if literal.start_with?('-') && Float(literal).zero?
+        raise_error('invalid number') unless number_delimiter?(current)
 
-        float ? Float(literal) : Integer(literal, 10)
+        Number.parse(literal)
       rescue ArgumentError
         raise_error('invalid number')
+      end
+
+      def number_delimiter?(char)
+        char.nil? || char.match?(/[\s,\]}\x1e]/)
       end
 
       def parse_special_number(positive:)

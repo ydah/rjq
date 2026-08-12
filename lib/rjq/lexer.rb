@@ -236,9 +236,7 @@ module Rjq
         advance while digit?(current)
       end
       text = @source[start...@index]
-      return Float(text) if text.start_with?('-') && Float(text).zero?
-
-      text.match?(/[.eE]/) ? Float(text) : Integer(text, 10)
+      Number.parse(text)
     rescue ArgumentError
       raise parse_error('invalid number')
     end

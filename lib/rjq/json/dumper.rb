@@ -18,6 +18,8 @@ module Rjq
           'true'
         when FalseClass
           'false'
+        when Number
+          value.dump
         when Integer
           value.to_s
         when Float
@@ -39,9 +41,11 @@ module Rjq
         return Float::MAX.to_s if value.infinite? == 1
         return "-#{Float::MAX}" if value.infinite? == -1
         return '-0' if value.zero? && (1.0 / value).infinite? == -1
-        return value.to_i.to_s if value == value.to_i
-
-        text = value.to_s
+        text = value.to_s.sub(/\.0(?=e)/, '')
+        if value == value.to_i
+          integer_text = value.to_i.to_s
+          return integer_text if value.abs < 1e16 || integer_text.length <= text.length
+        end
         text.include?('.') || text.match?(/[eE]/) ? text : "#{text}.0"
       end
       private_class_method :dump_float
