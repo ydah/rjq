@@ -12,7 +12,7 @@ module Rjq
     OPTION_KEYS = (DEFAULT_OPTIONS.keys + %i[
       allow_comments color current_filename current_line exit_status input_chunk_size input_max_depth input_queue
       jq_origin library_path max_filter_depth max_number_digits max_string_bytes module_resolver regexp_timeout
-      max_replay_cache remaining_inputs source_path stderr
+      max_replay_cache remaining_inputs runtime_error_handler source_path stderr
     ]).freeze
     BOOLEAN_OPTIONS = %i[
       allow_comments ascii compact exit_status join_output null_input raw_input raw_output raw_output0 seq slurp
@@ -40,6 +40,7 @@ module Rjq
         validate_integer!(opts, :max_string_bytes, minimum: 0, optional: true)
         validate_regexp_timeout!(opts)
         validate_stderr!(opts)
+        validate_runtime_error_handler!(opts)
         validate_variables!(opts)
         Compiler.validate_options!(Compiler.options_from(opts))
         opts
@@ -96,6 +97,13 @@ module Rjq
         return if opts[:stderr].nil? || opts[:stderr].respond_to?(:puts)
 
         raise ArgumentError, 'stderr must be nil or respond to puts'
+      end
+
+      def validate_runtime_error_handler!(opts)
+        return unless opts.key?(:runtime_error_handler)
+        return if opts[:runtime_error_handler].nil? || opts[:runtime_error_handler].respond_to?(:call)
+
+        raise ArgumentError, 'runtime_error_handler must be nil or respond to call'
       end
 
       def validate_variables!(opts)
@@ -252,12 +260,21 @@ module Rjq
             remaining_inputs: builtin_queue, current_filename: display_filename(record.filename),
             current_line: record.line
           )
-          @program.run_with_instruction_budget(record.value, run_opts, instruction_budget).each do |result|
-            output_count += 1
-            max_outputs = @opts[:max_outputs]
-            raise RuntimeError, "output limit exceeded (#{max_outputs})" if max_outputs && output_count > max_outputs
+          begin
+            @program.run_with_instruction_budget(record.value, run_opts, instruction_budget).each do |result|
+              output_count += 1
+              max_outputs = @opts[:max_outputs]
+              raise RuntimeError, "output limit exceeded (#{max_outputs})" if max_outputs && output_count > max_outputs
 
-            emit.call(result)
+              emit.call(result)
+            end
+          rescue ResourceLimitError
+            raise
+          rescue Rjq::RuntimeError => e
+            handler = @opts[:runtime_error_handler]
+            raise unless handler
+
+            handler.call(e, record)
           end
         end
       end
@@ -336,8 +353,8 @@ module Rjq
                                    chunk_size: input_chunk_size,
                                    on_error: method(:warn_ignored_parse_error),
                                    max_depth: input_max_depth, max_number_digits: @opts[:max_number_digits],
-                                   max_string_bytes: @opts[:max_string_bytes]).lazy.map do |event|
-        InputRecord.new(value: event, filename: filename, line: 1)
+                                   max_string_bytes: @opts[:max_string_bytes], locations: true).lazy.map do |parsed|
+        InputRecord.new(value: parsed.value, filename: filename, line: parsed.line)
       end
     end
 

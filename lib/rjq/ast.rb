@@ -5,28 +5,42 @@ module Rjq
     SourceSpan = Struct.new(:filename, :line, :column, :start_offset, :end_offset, keyword_init: true)
 
     class Context
-      attr_reader :variables, :functions, :options
+      attr_reader :variables, :functions, :options, :current_path, :binding_variable_paths
 
-      def initialize(variables: {}, functions: {}, options: {})
+      def initialize(variables: {}, functions: {}, options: {}, current_path: [], binding_variable_paths: {})
         @variables = variables
         @functions = functions
         @options = options
+        @current_path = current_path
+        @binding_variable_paths = binding_variable_paths
       end
 
       def with_variable(name, value)
-        self.class.new(variables: variables.merge(name => value), functions: functions, options: options)
+        copy(variables: variables.merge(name => value))
       end
 
       def with_function(name, arity, definition)
-        self.class.new(
-          variables: variables,
-          functions: functions.merge([name, arity] => definition),
-          options: options
-        )
+        copy(functions: functions.merge([name, arity] => definition))
       end
 
       def with_functions(new_functions)
-        self.class.new(variables: variables, functions: new_functions, options: options)
+        copy(functions: new_functions)
+      end
+
+      def with_path_state(current_path:, variables: binding_variable_paths)
+        copy(current_path: current_path, binding_variable_paths: variables)
+      end
+
+      def with_options(new_options)
+        copy(options: new_options)
+      end
+
+      private
+
+      def copy(variables: @variables, functions: @functions, options: @options,
+               current_path: @current_path, binding_variable_paths: @binding_variable_paths)
+        self.class.new(variables: variables, functions: functions, options: options,
+                       current_path: current_path, binding_variable_paths: binding_variable_paths)
       end
     end
 
@@ -175,8 +189,8 @@ module Rjq
         [input]
       end
 
-      def paths(_input, _context)
-        [[]]
+      def paths(_input, context)
+        [context.current_path]
       end
     end
 
@@ -274,6 +288,13 @@ module Rjq
 
         [context.variables[@name]]
       end
+
+      def paths(input, context)
+        return [context.binding_variable_paths.fetch(@name)] if context.binding_variable_paths.key?(@name)
+
+        result = eval(input, context).first
+        raise InvalidPathError.new(invalid_path_message(result, input, context), result)
+      end
     end
 
     class Pipe < Node
@@ -346,13 +367,24 @@ module Rjq
 
       def eval(input, context)
         @source.eval(input, context).flat_map do |value|
-          @body.eval(input, AST.bind_pattern(context, @pattern, value))
+          bound = AST.bind_pattern(context, @pattern, value)
+          bound ? @body.eval(input, bound) : []
         end
       end
 
       def paths(input, context)
-        @source.eval(input, context).flat_map do |value|
-          @body.paths(input, AST.bind_pattern(context, @pattern, value))
+        values = @source.eval(input, context)
+        values.flat_map do |value|
+          bound, pattern_path, relative_variables = AST.bind_pattern_with_path(context, @pattern, value)
+          base_path = context.current_path + pattern_path
+          variable_paths = context.binding_variable_paths.to_h { |name, _path| [name, base_path] }
+          variable_paths.merge!(relative_variables.transform_values { |path| context.current_path + path })
+          AST.validate_pattern_path(input, base_path)
+          scoped = bound.with_path_state(current_path: base_path, variables: variable_paths)
+          AST.validate_binding_results(input, @body.eval(input, scoped), @body.paths(input, scoped),
+                                       alternative_base: base_path,
+                                       variable_paths: variable_paths.values,
+                                       alternative_paths: AST.alternative_paths(@pattern))
         end
       end
     end
@@ -683,6 +715,7 @@ module Rjq
         accumulators = @initial.eval(input, context)
         @generator.eval(input, context).each do |value|
           ctx = AST.bind_pattern(context, @variable, value)
+          next unless ctx
           accumulators = accumulators.flat_map { |accumulator| @update.eval(accumulator, ctx) }
         end
         accumulators
@@ -706,6 +739,7 @@ module Rjq
           accumulators = [initial]
           @generator.eval(input, context).each do |value|
             ctx = AST.bind_pattern(context, @variable, value)
+            next unless ctx
             accumulators = accumulators.flat_map { |accumulator| @update.eval(accumulator, ctx) }
             accumulators.each { |accumulator| out.concat(@extract ? @extract.eval(accumulator, ctx) : [accumulator]) }
           rescue BreakSignal => e
@@ -1119,7 +1153,8 @@ module Rjq
       case pattern[0]
       when :alternatives
         matched = pattern[1].lazy.map { |candidate| match_bind_pattern(context, candidate, value) }.find(&:itself)
-        bind_missing_variables(matched || context, pattern_variable_names(pattern), nil)
+        matched ||= bind_pattern(context, pattern[1].first, value)
+        bind_missing_variables(matched, pattern_variable_names(pattern), nil)
       when :both
         bind_pattern(bind_pattern(context, pattern[1], value), pattern[2], value)
       when :var
@@ -1127,9 +1162,15 @@ module Rjq
       when :object
         pattern[1].reduce(context) do |ctx, (key, child)|
           actual_key = key.is_a?(Node) ? key.eval(value, ctx).first : key
+          unless value.nil? || value.is_a?(Hash)
+            raise TypeError, "Cannot index #{Value.type_of(value)} with string #{actual_key.to_s.inspect}"
+          end
           bind_pattern(ctx, child, value.is_a?(Hash) ? value[actual_key.to_s] : nil)
         end
       when :array
+        unless value.nil? || value.is_a?(Array)
+          raise TypeError, "Cannot index #{Value.type_of(value)} with number"
+        end
         pattern[1].each_with_index.reduce(context) do |ctx, (child, index)|
           bind_pattern(ctx, child, value.is_a?(Array) ? value[index] : nil)
         end
@@ -1141,11 +1182,11 @@ module Rjq
       when :var
         bind_pattern(context, pattern, value)
       when :object
-        return nil unless value.is_a?(Hash)
+        return nil unless value.nil? || value.is_a?(Hash)
 
         bind_pattern(context, pattern, value)
       when :array
-        return nil unless value.is_a?(Array)
+        return nil unless value.nil? || value.is_a?(Array)
 
         bind_pattern(context, pattern, value)
       when :alternatives
@@ -1177,6 +1218,228 @@ module Rjq
       names.reduce(context) do |ctx, name|
         ctx.variables.key?(name) ? ctx : ctx.with_variable(name, value)
       end
+    end
+
+    def bind_pattern_with_path(context, pattern, value)
+      candidates = pattern[0] == :alternatives ? pattern[1] : [pattern]
+      errors = []
+      candidates.each do |candidate|
+        begin
+          return bind_pattern_candidate_with_path(context, pattern, candidate, value)
+        rescue Rjq::RuntimeError => e
+          errors << e
+        end
+      end
+      raise errors.last
+    end
+
+    def bind_pattern_candidate_with_path(context, pattern, candidate, value)
+      bound, path, variables = bind_single_pattern_with_path(context, candidate, value)
+      selected = value_at_path(value, path)
+      pattern_variable_names(pattern).each do |name|
+        next if variables.key?(name)
+
+        variables[name] = selected.nil? ? path : (static_variable_path(pattern, name) || path)
+      end
+      [bind_missing_variables(bound, pattern_variable_names(pattern), nil), path, variables]
+    end
+
+    def validate_binding_results(input, results, paths, alternative_base: nil, variable_paths: [],
+                                 alternative_paths: [])
+      return [] if results.empty?
+
+      validated = []
+      switched_path = nil
+      results.zip(paths).each do |result, path|
+        if alternative_paths.include?([]) && path == alternative_base &&
+           !binding_path_matches?(input, path, result)
+          path = []
+        end
+        variable_path = variable_paths.include?(path)
+        if switched_path && variable_path
+          if binding_path_matches?(input, path, result)
+            validated << switched_path
+            next
+          end
+          raise InvalidPathError.new("Invalid path expression with result #{JSON::Dumper.dump(result, indent: nil)}",
+                                     result, outputs: validated)
+        end
+
+        switching = !alternative_paths.empty? && variable_path && path != alternative_base
+        if switching && validated.empty?
+          validate_pattern_path(input, path) unless alternative_paths.include?([])
+          validated << path
+          switched_path = path unless binding_path_matches?(input, path, result)
+          next
+        end
+
+        unless binding_path_matches?(input, path, result)
+          raise InvalidPathError.new("Invalid path expression with result #{JSON::Dumper.dump(result, indent: nil)}",
+                                     result, outputs: validated)
+        end
+        validated << path
+        if switching && binding_path_matches?(input, path, result)
+          switched_path = path
+          validated << path
+        end
+      end
+      validated
+    end
+
+    def binding_path_matches?(input, path, result)
+      path && binding_path_components_valid?(input, path) && Value.equal?(value_at_path(input, path), result)
+    end
+
+    def binding_path_components_valid?(input, path)
+      current = input
+      path.each do |component|
+        return true if current.nil?
+        return false unless current.is_a?(Array) || current.is_a?(Hash)
+        return false if current.is_a?(Array) && !component.is_a?(Numeric)
+        return false if current.is_a?(Hash) && !component.is_a?(String)
+
+        current = current.is_a?(Array) ? current[component.to_i] : current[component]
+      end
+      true
+    end
+
+    def alternative_paths(pattern)
+      return [] unless pattern[0] == :alternatives
+
+      pattern[1].map { |candidate| pattern_primary_path(candidate) }
+    end
+
+    def pattern_primary_path(pattern)
+      case pattern[0]
+      when :var then []
+      when :object
+        key, child = pattern[1].first
+        [key.is_a?(Node) ? nil : key.to_s] + pattern_primary_path(child)
+      when :array then [0] + pattern_primary_path(pattern[1].first || [:var, ''])
+      when :both then pattern_primary_path(pattern[1]) + pattern_primary_path(pattern[2])
+      else []
+      end
+    end
+
+    def validate_pattern_path(input, path)
+      return true if input.nil? || path.empty?
+
+      current = input
+      previous_container = input
+      path.each do |component|
+        unless current.is_a?(Array) || current.is_a?(Hash)
+          raise InvalidPathError.new("Invalid path expression near attempt to access element #{component.inspect} of " \
+                                     "#{JSON::Dumper.dump(previous_container, indent: nil)}", current)
+        end
+        if current.is_a?(Array) && !component.is_a?(Numeric)
+          raise TypeError, "Cannot index array with string #{component.to_s.inspect}"
+        end
+        if current.is_a?(Hash) && !component.is_a?(String)
+          raise TypeError, 'Cannot index object with number'
+        end
+        previous_container = current
+        current = current.is_a?(Array) ? current[component.to_i] : current[component]
+      end
+      true
+    end
+
+    def bind_single_pattern_with_path(context, pattern, value)
+      case pattern[0]
+      when :var
+        [context.with_variable(pattern[1], value), [], { pattern[1] => [] }]
+      when :object
+        unless value.nil? || value.is_a?(Hash)
+          key = pattern[1].first&.first
+          key = key.eval(value, context).first if key.is_a?(Node)
+          raise TypeError, "Cannot index #{Value.type_of(value)} with string #{key.to_s.inspect}"
+        end
+        ctx = context
+        combined = []
+        variables = {}
+        pattern[1].each do |key, child|
+          actual_key = key.is_a?(Node) ? key.eval(value, ctx).first : key
+          child_value = value.is_a?(Hash) ? value[actual_key.to_s] : nil
+          ctx, child_path, child_variables = bind_single_pattern_with_path(ctx, child, child_value)
+          full = [actual_key.to_s] + child_path
+          combined.concat(full)
+          variables.merge!(child_variables.transform_values { |path| [actual_key.to_s] + path })
+        end
+        variables.transform_values! { combined } if variables.length > 1
+        [ctx, combined, variables]
+      when :array
+        unless value.nil? || value.is_a?(Array)
+          raise TypeError, "Cannot index #{Value.type_of(value)} with number"
+        end
+        ctx = context
+        entries = pattern[1].each_with_index.map do |child, index|
+          child_value = value.is_a?(Array) ? value[index] : nil
+          ctx, child_path, child_variables = bind_single_pattern_with_path(ctx, child, child_value)
+          [[index] + child_path, child_variables.transform_values { |path| [index] + path }]
+        end
+        combined = entries.reverse.flat_map(&:first)
+        variables = entries.each_with_object({}) { |(_path, vars), all| all.merge!(vars) }
+        variables.transform_values! { combined } if variables.length > 1
+        [ctx, combined, variables]
+      when :both
+        first_ctx, first_path, first_variables = bind_single_pattern_with_path(context, pattern[1], value)
+        second_ctx, second_path, second_variables = bind_single_pattern_with_path(first_ctx, pattern[2], value)
+        combined = first_path + second_path
+        variables = first_variables.merge(second_variables)
+        variables.transform_values! { combined } if variables.length > 1
+        [second_ctx, combined, variables]
+      else
+        raise TypeError, 'invalid binding pattern'
+      end
+    end
+
+    def static_variable_path(pattern, target, prefix = [])
+      case pattern[0]
+      when :var
+        return prefix if pattern[1] == target
+      when :object
+        pattern[1].each do |key, child|
+          next if key.is_a?(Node)
+
+          found = static_variable_path(child, target, prefix + [key.to_s])
+          return found if found
+        end
+      when :array
+        pattern[1].each_with_index do |child, index|
+          found = static_variable_path(child, target, prefix + [index])
+          return found if found
+        end
+      when :both
+        return static_variable_path(pattern[1], target, prefix) || static_variable_path(pattern[2], target, prefix)
+      when :alternatives
+        pattern[1].each do |candidate|
+          found = static_variable_path(candidate, target, prefix)
+          return found if found
+        end
+      end
+      nil
+    end
+
+    def value_at_path(value, path)
+      path.reduce(value) do |current, component|
+        return nil unless current.is_a?(Array) || current.is_a?(Hash)
+        return nil if current.is_a?(Array) && !component.is_a?(Numeric)
+        return nil if current.is_a?(Hash) && !component.is_a?(String)
+
+        current.is_a?(Array) ? current[component.to_i] : current[component]
+      end
+    end
+
+    def valid_path_parent?(input, path)
+      return true if input.nil? || path.empty?
+
+      parent = path[0...-1].reduce(input) do |current, component|
+        return false unless current.is_a?(Array) || current.is_a?(Hash)
+        return false if current.is_a?(Array) && !component.is_a?(Numeric)
+        return false if current.is_a?(Hash) && !component.is_a?(String)
+
+        current.is_a?(Array) ? current[component.to_i] : current[component]
+      end
+      parent.is_a?(Array) || parent.is_a?(Hash)
     end
 
     def numeric(value)

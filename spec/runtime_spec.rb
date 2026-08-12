@@ -4,6 +4,19 @@ require 'spec_helper'
 require 'tmpdir'
 
 RSpec.describe Rjq do
+  it 'preserves exact nonnegative number literals and negative zero through abs' do
+    source = '[0.1,9007199254740993,-9007199254740993,-0]'
+    values = Rjq::JSON::Parser.parse_one(source)
+    result = described_class.run('map(abs)', values).first
+
+    expect(Rjq::JSON::Dumper.dump(result, indent: nil))
+      .to eq('[0.1,9007199254740993,9007199254740992,-0]')
+    expect { described_class.run('abs', nil).to_a }
+      .to raise_error(Rjq::TypeError, 'null (null) cannot be negated')
+    expect { described_class.run('abs', true).to_a }
+      .to raise_error(Rjq::TypeError, 'boolean (true) cannot be negated')
+  end
+
   it 'checks containment in deeply nested values without recursion' do
     container = 'needle in haystack'
     contained = 'needle'
@@ -345,6 +358,11 @@ RSpec.describe Rjq do
       .to raise_error(Rjq::HaltError) { |error| expect(error.status).to eq(0) }
     expect { described_class.run('halt_error(7)?', nil).to_a }
       .to raise_error(Rjq::HaltError) { |error| expect(error.status).to eq(7) }
+    expect { described_class.run('"stopped" | halt_error(9)', nil).to_a }
+      .to raise_error(Rjq::HaltError, 'stopped') do |error|
+        expect(error.status).to eq(9)
+        expect(error.value).to eq('stopped')
+      end
   end
 
   it 'accepts comments and keyword field names while rejecting a trailing dot' do
@@ -387,6 +405,17 @@ RSpec.describe Rjq do
                              'first/1', 'last/1', 'bsearch/1', 'capture/2', 'format/1', 'copysign/2',
                              'erf/0', 'finites/0', 'get_search_list/0', 'jn/2', 'nextafter/2')
     expect(names).not_to include('halt/1', 'pow/1')
+  end
+
+  it 'keeps rjq extensions out of the jq builtin list' do
+    names = described_class.run('builtins', nil).to_a.fetch(0)
+
+    expect(names).not_to include('ascii/0', 'dateadd/1', 'datesub/1', 'leaf_paths/0', 'to_number/0',
+                                 'GROUP_BY/1', 'recurse_down/0', 'true/0')
+    expect(Rjq::Builtins::EXTENSION_ARITIES).to include('ascii' => [0], 'dateadd' => [1],
+                                                       'leaf_paths' => [0, 1])
+    expect(described_class.run('ascii', 'é').to_a).to eq(['\u00e9'])
+    expect(described_class.run('0 | dateadd(1)', nil).to_a).to eq([1])
   end
 
   it 'does not read stdin for null input unless input builtins are used' do
@@ -697,6 +726,7 @@ RSpec.describe Rjq do
       .to eq(['Cannot index array with string "0"'])
     expect(described_class.run('try .[false] catch .', nil).to_a)
       .to eq(['Cannot index null with boolean'])
+    expect(described_class.run('(.[{}] = 0)?', nil).to_a).to eq([])
   end
 
   it 'evaluates object literals and string interpolation' do
@@ -808,6 +838,15 @@ RSpec.describe Rjq do
     expect(described_class.run('setpath([{start:1,end:3}]; [9])', input).to_a).to eq([[0, 9, 3]])
   end
 
+  it 'reports nonfinite assignment indices without leaking Ruby errors' do
+    expect { described_class.run('.[-infinite] = 1', []).to_a }
+      .to raise_error(Rjq::RuntimeError, 'Out of bounds negative array index')
+    expect { described_class.run('.[infinite] = 1', {}).to_a }
+      .to raise_error(Rjq::TypeError, 'Cannot index object with number')
+    expect { described_class.run('.[infinite] = 1', []).to_a }
+      .to raise_error(Rjq::TypeError, 'Cannot index array with number')
+  end
+
   it 'maps object values and removes empty map_values results' do
     expect(described_class.run('map(.+1)', { 'a' => 1, 'b' => 2 }).to_a).to eq([[2, 3]])
     expect(described_class.run('map_values(empty)', [1, 2]).to_a).to eq([[]])
@@ -819,6 +858,115 @@ RSpec.describe Rjq do
     expect(described_class.run('. as {a: $a, b: $b} | $a + $b', { 'a' => 2, 'b' => 5 }).to_a).to eq([7])
     expect(described_class.run('. as [$a, $b] | $a * $b', [3, 4]).to_a).to eq([12])
     expect(described_class.run('reduce .[] as {v: $v} (0; . + $v)', [{ 'v' => 1 }, { 'v' => 2 }]).to_a).to eq([3])
+    expect do
+      described_class.run('.[] | . as {a:$a} ?// {a:$a} | $a', [[3], 4]).to_a
+    end.to raise_error(Rjq::TypeError, 'Cannot index array with string "a"')
+    expect(described_class.run('.[] | . as {a:$a} ?// $a | $a', [[3], 4]).to_a).to eq([[3], 4])
+    expect(described_class.run('null as {a:$a} ?// {b:$b} | [$a,$b]', nil).to_a).to eq([[nil, nil]])
+    expect(described_class.run('null as [$a] ?// {b:$b} | [$a,$b]', nil).to_a).to eq([[nil, nil]])
+    expect(described_class.run('path(. as {a:$a} ?// {b:$b} | .)', nil).to_a).to eq([['a']])
+    expect(described_class.run('path(. as {a:[$a,$b],c:$c} | .)', nil).to_a)
+      .to eq([['a', 1, 0, 'c']])
+    input = { 'a' => 1, 'b' => 2 }
+    expect(described_class.run('(. as {a:$x} | $x) = 0', input).to_a).to eq([{ 'a' => 0, 'b' => 2 }])
+    expect(described_class.run('(. as {a:$x} ?// {b:$y} | $y) = 0', input).to_a)
+      .to eq([{ 'a' => 1, 'b' => 0 }])
+    expect { described_class.run('path(. as {a:$x} | .)', input).to_a }
+      .to raise_error(Rjq::InvalidPathError)
+  end
+
+  it 'preserves binding-path generator order, backtracking, and partial errors' do
+    input = { 'a' => 1 }
+    alternatives = '. as {a:$x} ?// {b:$y} | '
+
+    expect(described_class.run("path(#{alternatives}\u0024x,\u0024y)", input).to_a).to eq([['a'], ['b'], ['b']])
+    expect(described_class.run("path(#{alternatives}\u0024y,\u0024x)", input).to_a).to eq([['b'], ['b']])
+    expect(described_class.run("(#{alternatives}\u0024x,\u0024y) += 1", input).to_a)
+      .to eq([{ 'a' => 2, 'b' => 2 }])
+
+    yielded = []
+    expect do
+      described_class.run('path(. as {a:$x} | $x,.a)', input).each { |path| yielded << path }
+    end.to raise_error(Rjq::InvalidPathError)
+    expect(yielded).to eq([['a']])
+  end
+
+  it 'evaluates binding sources and dynamic patterns once while retaining nested paths' do
+    source_io = StringIO.new('"a" "b"')
+    expect(described_class.run_stream('path(null as $x | .[input])', io: source_io,
+                                      opts: { null_input: true }).to_a).to eq([['a']])
+    pattern_io = StringIO.new('"a" "b"')
+    expect(described_class.run_stream('path(. as {(input):$x} | $x)', io: pattern_io,
+                                      opts: { null_input: true }).to_a).to eq([['a']])
+    nested = { 'a' => { 'b' => 1 } }
+    expect(described_class.run('path(. as {a:$x} | $x as {b:$y} | $y)', nested).to_a)
+      .to eq([['a', 'b']])
+    expect(described_class.run('path(. as $x | empty)', { 'a' => 1 }).to_a).to eq([])
+  end
+
+  it 'validates nonlinear binding paths and typed alternative fallbacks' do
+    expect { described_class.run('path(. as [$x,$y] | empty)', [1, 2]).to_a }
+      .to raise_error(Rjq::InvalidPathError)
+    expect { described_class.run('(. as [$x,$y] | empty) = 0', [1, 2]).to_a }
+      .to raise_error(Rjq::InvalidPathError)
+    expect { described_class.run('path(. as [$x] ?// {b:$y} | $y)', [1, 2]).to_a }
+      .to raise_error(Rjq::TypeError, 'Cannot index array with string "b"')
+    expect { described_class.run('path(. as {a:$x} ?// [$y] | $y)', { 'a' => 1 }).to_a }
+      .to raise_error(Rjq::TypeError, 'Cannot index object with number')
+  end
+
+  it 'restarts alternative binding generators without losing prior paths' do
+    yielded = []
+    input = { 'a' => [1, 2], 'b' => 3 }
+    expect do
+      described_class.run('path(. as {a:$x} ?// {b:$y} | $y,$x)', input).each { |path| yielded << path }
+    end.to raise_error(Rjq::InvalidPathError, 'Invalid path expression with result null')
+    expect(yielded).to eq([['b']])
+
+    expect(described_class.run('path(. as {a:$x} ?// $y | .)', { 'a' => 1 }).to_a).to eq([[]])
+    expect(described_class.run('(. as {a:$x} ?// $y | .) = 0', { 'a' => 1 }).to_a).to eq([0])
+  end
+
+  it 'preserves partial runtime paths and isolates nested binding provenance' do
+    yielded = []
+    expect do
+      described_class.run('path(. as $x | $x,.a)', [1, 2]).each { |path| yielded << path }
+    end.to raise_error(Rjq::TypeError, 'Cannot index array with string "a"')
+    expect(yielded).to eq([[]])
+
+    nested = { 'a' => { 'b' => 1 } }
+    expect { described_class.run('path(. as {a:$x} | $x as {b:$y} | $x)', nested).to_a }
+      .to raise_error(Rjq::InvalidPathError)
+  end
+
+  it 'does not replay diagnostic side effects while resolving binding paths' do
+    stderr = StringIO.new
+
+    expect(described_class.run('path(. as $x | debug)', nil, stderr: stderr).to_a).to eq([[]])
+    expect(stderr.string.lines.length).to eq(1)
+    expect(described_class.run('path(. as $x | values)', nil).to_a).to eq([])
+  end
+
+  it 'backtracks across three binding alternatives with ordered partial paths' do
+    input = [1, 2]
+    expect do
+      described_class.run('path(. as {a:[$x]} ?// {b:$y} ?// [$z] | $x)', input).to_a
+    end.to raise_error(Rjq::InvalidPathError)
+
+    yielded = []
+    expect do
+      described_class.run('path(. as {a:$x} ?// {b:$y} ?// [$z] | $z,$y,$x)', input)
+                     .each { |path| yielded << path }
+    end.to raise_error(Rjq::InvalidPathError)
+    expect(yielded).to eq([[0]])
+
+    yielded = []
+    object = { 'a' => [1, 2], 'b' => 3 }
+    expect do
+      described_class.run('path(. as {a:$x} ?// [$y] ?// {b:$z} | $z,$y,$x)', object)
+                     .each { |path| yielded << path }
+    end.to raise_error(Rjq::InvalidPathError)
+    expect(yielded).to eq([['b']])
   end
 
   it 'supports filter parameters in user functions' do

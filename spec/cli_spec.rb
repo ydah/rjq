@@ -230,6 +230,24 @@ RSpec.describe Rjq::CLI do
     end
   end
 
+  it 'tracks stream event lines and continues after stream errors' do
+    out = StringIO.new
+    err = StringIO.new
+    input = StringIO.new("\n\n[1,\n2]\n")
+
+    code = described_class.new(['--stream', '-c', 'input_line_number'], stdin: input, stdout: out, stderr: err).run
+
+    expect(code).to eq(0)
+    expect(out.string).to eq("3\n4\n4\n")
+    expect(err.string).to eq('')
+
+    out = StringIO.new
+    code = described_class.new(['--stream-errors', '-c', '.'], stdin: StringIO.new("[1, xxx, 2]\n3\n"),
+                                                                 stdout: out, stderr: err).run
+    expect(code).to eq(0)
+    expect(out.string).to eq("[[0],1]\n[\"Invalid numeric literal at line 1, column 8\",[1]]\n[[],3]\n")
+  end
+
   it 'prints debug output to stderr and passes through input' do
     out = StringIO.new
     err = StringIO.new
@@ -281,6 +299,18 @@ RSpec.describe Rjq::CLI do
     code = described_class.new(['.'], stdin: StringIO.new('{'), stdout: StringIO.new, stderr: err).run
     expect(code).to eq(5)
     expect(err.string).to include('JSON parse error')
+  end
+
+  it 'reports each input runtime error and continues with later inputs' do
+    out = StringIO.new
+    err = StringIO.new
+
+    code = described_class.new(['-c', '1, error("x")'], stdin: StringIO.new("null\nnull\n"),
+                                                              stdout: out, stderr: err).run
+
+    expect(code).to eq(5)
+    expect(out.string).to eq("1\n1\n")
+    expect(err.string).to eq("rjq: runtime error: x\nrjq: runtime error: x\n")
   end
 
   it 'reports regular expression timeouts as runtime errors' do

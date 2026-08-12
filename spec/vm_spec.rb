@@ -130,4 +130,29 @@ RSpec.describe Rjq::VM do
     expect { Rjq::SemanticAnalyzer.new(unknown).validate! }
       .to raise_error(Rjq::CompileError, /unknown opcode/)
   end
+
+  it 'validates lexical label bindings before execution' do
+    expect { Rjq.compile('. as $foo | break $foo') }
+      .to raise_error(Rjq::CompileError, /label \$foo is not defined/)
+    expect(Rjq.run('label $foo | (def stop: break $foo; stop), 1', nil).to_a).to eq([])
+  end
+
+
+  it 'rejects computed constant non-string object keys during compilation' do
+    ['{([]):1}', '{([0,1]):1}', '{({}):1}', '{(0+0):1}', '{(0|.):1}', '{(1<2):1}', '{(null):1}'].each do |filter|
+      expect { Rjq.compile(filter) }.to raise_error(Rjq::CompileError, /Cannot use .* as object key/)
+    end
+    expect { Rjq.compile('{(-1):1}').run(nil).to_a }.to raise_error(Rjq::TypeError)
+    ['{(0//1):1}', '{(false//0):1}', '{(true and false):1}', '{(false or 0):1}'].each do |filter|
+      expect { Rjq.compile(filter) }.not_to raise_error
+      expect { Rjq.run(filter, nil).to_a }.to raise_error(Rjq::TypeError)
+    end
+    expect(Rjq.run('{("a"+"b"):1}', nil).to_a).to eq([{ 'ab' => 1 }])
+  end
+
+  it 'infers constant object-key types without evaluating generated values' do
+    expect_any_instance_of(Rjq::AST::BinaryOp).not_to receive(:eval)
+
+    expect { Rjq.compile('{("a"*1000000000):1}') }.not_to raise_error
+  end
 end

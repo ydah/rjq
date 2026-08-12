@@ -42,6 +42,11 @@ module Rjq
       names.each { |name| (registry[name] ||= []) << arity }
     end.transform_values(&:freeze).freeze
     BUILTIN_NAMES = BUILTIN_ARITIES.keys.freeze
+    EXTENSION_NAMES = %w[
+      GROUP_BY UNIQUE_BY ascii date dateadd datesub false leaf_paths null recurse_down to_number true
+    ].freeze
+    JQ_BUILTIN_NAMES = (BUILTIN_NAMES - EXTENSION_NAMES).freeze
+    EXTENSION_ARITIES = EXTENSION_NAMES.to_h { |name| [name, BUILTIN_ARITIES.fetch(name)] }.freeze
     FORMAT_NAMES = %w[@text @json @html @uri @csv @tsv @sh @base64 @base64d @base32 @base32d].freeze
     REGISTRY = BUILTIN_NAMES.to_h { |name| [name, true] }.freeze
     FILTER_ARGUMENT_POSITIONS = {
@@ -164,7 +169,7 @@ module Rjq
       when 'add'
         [add(input)]
       when 'abs'
-        [input.is_a?(Numeric) ? input.abs : input]
+        [absolute(input)]
       when 'any'
         [any?(input, context, args)]
       when 'all'
@@ -306,7 +311,7 @@ module Rjq
       when 'isempty'
         [args.fetch(0).take(input, context, 1).empty?]
       when 'builtins'
-        [BUILTIN_NAMES.flat_map { |builtin| builtin_arities(builtin) }.sort]
+        [JQ_BUILTIN_NAMES.flat_map { |builtin| builtin_arities(builtin) }.sort]
       when 'modulemeta'
         [modulemeta(input, context)]
       when 'env'
@@ -599,6 +604,22 @@ module Rjq
       end
     rescue Math::DomainError
       Float::NAN
+    end
+
+    def absolute(value)
+      if value.nil? || value == true || value == false
+        raise TypeError, "#{Value.type_of(value)} (#{JSON::Dumper.dump(value, indent: nil)}) cannot be negated"
+      end
+      return value unless value.is_a?(Numeric)
+      if value.is_a?(Number)
+        return value unless value.literal.start_with?('-')
+        return value if value.literal.match?(/\A-0+(?:\.0+)?(?:[eE][+-]?\d+)?\z/)
+
+        return value.to_f.abs
+      end
+      return value if value.zero? || !value.negative?
+
+      value.abs
     end
 
     def math_nary(name, input, context, args)

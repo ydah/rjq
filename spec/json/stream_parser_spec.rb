@@ -26,6 +26,23 @@ RSpec.describe Rjq::JSON::StreamParser do
     expect(errors).to eq([])
   end
 
+  it 'recovers at the next line after ordinary stream errors' do
+    input = "[1, xxx, 2]\n3\n"
+
+    events = described_class.parse(input, stream_errors: true).to_a
+
+    expect(events).to eq([[[0], 1], ['Invalid numeric literal at line 1, column 8', [1]], [[], 3]])
+  end
+
+  it 'reports the line at which each event becomes available' do
+    input = "\n\n[1,\n2]\n"
+
+    events = described_class.parse(input, locations: true).to_a
+
+    expect(events.map(&:value)).to eq([[[0], 1], [[1], 2], [[1]]])
+    expect(events.map(&:line)).to eq([3, 4, 4])
+  end
+
   it 'reports excessive nesting as a stream parse error' do
     input = ('[' * 257) + '0' + (']' * 257)
 

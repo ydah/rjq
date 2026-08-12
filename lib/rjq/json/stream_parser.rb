@@ -5,6 +5,7 @@ module Rjq
     class StreamParser
       DEFAULT_MAX_DEPTH = 256
       Result = Struct.new(:events, :close_path, keyword_init: true)
+      ParsedEvent = Struct.new(:value, :line, keyword_init: true)
       class StreamError < StandardError
         attr_reader :path
 
@@ -16,15 +17,17 @@ module Rjq
 
       class << self
         def parse(io_or_string, seq: false, stream_errors: false, chunk_size: InputBuffer::DEFAULT_CHUNK_SIZE,
-                  on_error: nil, max_depth: DEFAULT_MAX_DEPTH, max_number_digits: nil, max_string_bytes: nil)
+                  on_error: nil, max_depth: DEFAULT_MAX_DEPTH, max_number_digits: nil, max_string_bytes: nil,
+                  locations: false)
           new(io_or_string, seq: seq, stream_errors: stream_errors, chunk_size: chunk_size,
                             on_error: on_error, max_depth: max_depth, max_number_digits: max_number_digits,
-                            max_string_bytes: max_string_bytes).parse
+                            max_string_bytes: max_string_bytes, locations: locations).parse
         end
       end
 
       def initialize(input, seq: false, stream_errors: false, chunk_size: InputBuffer::DEFAULT_CHUNK_SIZE,
-                     on_error: nil, max_depth: DEFAULT_MAX_DEPTH, max_number_digits: nil, max_string_bytes: nil)
+                     on_error: nil, max_depth: DEFAULT_MAX_DEPTH, max_number_digits: nil, max_string_bytes: nil,
+                     locations: false)
         validate_options!(chunk_size, max_depth, max_number_digits, max_string_bytes)
         @input = InputBuffer.new(input, chunk_size: chunk_size)
         @seq = seq
@@ -33,6 +36,7 @@ module Rjq
         @max_depth = max_depth
         @max_number_digits = max_number_digits
         @max_string_bytes = max_string_bytes
+        @locations = locations
         @depth = 0
         @index = 0
         @line = 1
@@ -55,22 +59,30 @@ module Rjq
           break if eof?
 
           begin
+            value_line = @line
+            value_column = @column
             result = parse_value([])
             skip_whitespace
             commit(result)
+            @unmatched_error_location = [value_line, value_column] if @unmatched_error_location
             raise_error('expected record separator', []) if @seq && !eof? && current != "\x1e"
             @input.discard_before(@index)
           rescue StreamError => e
             if @stream_errors
-              @events << [e.message, e.path]
+              emit([e.message, e.path])
             elsif @seq && @on_error
               @on_error.call(e.message)
             else
               raise JSONParseError, e.message
             end
-            break unless @seq
-
-            resync_to_record_separator
+            @unmatched_error_location = [@last_error_line, @last_error_column + 1]
+            if @seq
+              resync_to_record_separator
+            elsif @stream_errors
+              resync_to_next_line
+            else
+              break
+            end
           end
         end
         @events
@@ -86,18 +98,26 @@ module Rjq
         when '['
           parse_array(path)
         when '"'
-          Result.new(events: [[path, parse_string(path)]], close_path: path)
+          Result.new(events: [pending_event(path, parse_string(path))], close_path: path)
         when 't'
           consume_literal('true', path)
-          Result.new(events: [[path, true]], close_path: path)
+          Result.new(events: [pending_event(path, true)], close_path: path)
         when 'f'
           consume_literal('false', path)
-          Result.new(events: [[path, false]], close_path: path)
+          Result.new(events: [pending_event(path, false)], close_path: path)
         when 'n'
           consume_literal('null', path)
-          Result.new(events: [[path, nil]], close_path: path)
+          Result.new(events: [pending_event(path, nil)], close_path: path)
+        when ']', '}'
+          delimiter = current
+          if @unmatched_error_location
+            line, column = @unmatched_error_location
+            @unmatched_error_location = nil
+            raise_error_at("Unmatched '#{delimiter}' at the top-level", path, line, column)
+          end
+          raise_error("Unmatched '#{delimiter}' at the top-level", path)
         else
-          Result.new(events: [[path, parse_number(path)]], close_path: path)
+          Result.new(events: [pending_event(path, parse_number(path))], close_path: path)
         end
       end
 
@@ -109,7 +129,7 @@ module Rjq
         advance
         skip_whitespace
         if consume?('}')
-          @events << [path, {}]
+          emit([path, {}])
           return Result.new(events: [], close_path: path)
         end
 
@@ -118,7 +138,10 @@ module Rjq
           skip_whitespace
           raise_error('Unfinished JSON term at EOF', path + [nil]) if eof?
           raise_error('Expected another key:value pair', path + [nil]) if current == '}'
-          raise_error('Expected another key:value pair', path + [nil]) unless current == '"'
+          unless current == '"'
+            advance while current&.match?(/[0-9A-Za-z_+-]/)
+            raise_error('Invalid numeric literal', path + [nil])
+          end
 
           key = parse_string(path + [nil])
           skip_whitespace
@@ -143,7 +166,7 @@ module Rjq
           if consume?('}')
             commit(result)
             last_path = result.close_path
-            @events << [last_path]
+            emit([last_path])
             return Result.new(events: [], close_path: path)
           end
 
@@ -162,7 +185,7 @@ module Rjq
         advance
         skip_whitespace
         if consume?(']')
-          @events << [path, []]
+          emit([path, []])
           return Result.new(events: [], close_path: path)
         end
 
@@ -185,7 +208,7 @@ module Rjq
           if consume?(']')
             commit(result)
             last_path = result.close_path
-            @events << [last_path]
+            emit([last_path])
             return Result.new(events: [], close_path: path)
           end
 
@@ -197,7 +220,21 @@ module Rjq
       end
 
       def commit(result)
-        result.events.each { |event| @events << event }
+        result.events.each { |event| emit(event) }
+      end
+
+      def emit(event)
+        parsed = event.is_a?(ParsedEvent) ? event : located_event(event)
+        @events << (@locations ? parsed : parsed.value)
+      end
+
+      def located_event(value)
+        ParsedEvent.new(value: value, line: @line)
+      end
+
+      def pending_event(path, value)
+        event = [path, value]
+        path.empty? ? located_event(event) : event
       end
 
       def parse_string(path = [])
@@ -350,6 +387,12 @@ module Rjq
         @input.discard_before(@index)
       end
 
+      def resync_to_next_line
+        advance until eof? || current == "\n"
+        advance if current == "\n"
+        @input.discard_before(@index)
+      end
+
       def with_container_depth(path)
         @depth += 1
         raise_error('Exceeds depth limit for parsing', path) if @depth > @max_depth
@@ -460,10 +503,14 @@ module Rjq
       end
 
       def raise_error(message, path)
+        @last_error_line = line_number
+        @last_error_column = column_number
         raise StreamError.new(message: "#{message} at line #{line_number}, column #{column_number}", path: path)
       end
 
       def raise_error_at(message, path, line, column)
+        @last_error_line = line
+        @last_error_column = column
         raise StreamError.new(message: "#{message} at line #{line}, column #{column}", path: path)
       end
 

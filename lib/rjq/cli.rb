@@ -92,6 +92,11 @@ module Rjq
 
       @opts[:stderr] = @stderr
       @opts[:color] = @stdout.tty? && !ENV.key?('NO_COLOR') if @opts[:color].nil?
+      runtime_failed = false
+      @opts[:runtime_error_handler] = lambda do |error, _record|
+        runtime_failed = true
+        @stderr.puts("rjq: runtime error: #{error.message}")
+      end
       last = nil
       count = 0
       runtime = Runtime.new(@filter || '.', @opts)
@@ -100,6 +105,7 @@ module Rjq
         count += 1
         write_value(runtime, value)
       end
+      return 5 if runtime_failed
       return exit_status(last, count) if @opts[:exit_status]
 
       0

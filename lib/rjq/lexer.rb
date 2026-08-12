@@ -75,7 +75,7 @@ module Rjq
           elsif char == '@'
             advance
             Token.new(type: :format, value: read_identifier, line: start_line, column: start_column)
-          elsif number_start?(char)
+          elsif number_start?(char) || (char == '.' && digit?(@source[@index + 1]))
             Token.new(type: :number, value: read_number, line: start_line, column: start_column)
           elsif identifier_start?(char)
             identifier = read_identifier
@@ -255,8 +255,10 @@ module Rjq
 
     def read_number
       start = @index
+      leading_decimal = current == '.'
+      advance if leading_decimal
       advance while digit?(current)
-      if current == '.'
+      if !leading_decimal && current == '.'
         advance
         advance while digit?(current)
       end
@@ -266,6 +268,7 @@ module Rjq
         advance while digit?(current)
       end
       text = @source[start...@index]
+      text = "0#{text}" if leading_decimal
       Number.parse(text)
     rescue ArgumentError
       raise parse_error('invalid number')

@@ -7,7 +7,20 @@ module Rjq
 
   class CompileError < Error; end
 
-  class RuntimeError < Error; end
+  class RuntimeError < Error
+    attr_reader :outputs
+
+    def prepend_outputs(values)
+      @outputs = Array(values) + Array(@outputs)
+      self
+    end
+
+    def take_outputs
+      values = Array(@outputs)
+      @outputs = nil
+      values
+    end
+  end
 
   # Execution budgets are process-safety boundaries and cannot be caught by
   # jq filters such as `try` or `?`.
@@ -18,19 +31,20 @@ module Rjq
   class InvalidPathError < TypeError
     attr_reader :result
 
-    def initialize(message, result)
+    def initialize(message, result, outputs: nil)
       @result = result
+      prepend_outputs(outputs)
       super(message)
     end
   end
 
   class ErrorValue < RuntimeError
-    attr_reader :value, :outputs
+    attr_reader :value
 
     def initialize(value, outputs: nil)
       @value = value
-      @outputs = outputs
       super(value.to_s)
+      prepend_outputs(outputs)
     end
   end
 

@@ -18,6 +18,39 @@ module Rjq
       end
     end
 
+    class RecordingInputQueue
+      attr_reader :current_record
+
+      def initialize(queue)
+        @queue = queue
+        @records = []
+      end
+
+      def empty?
+        @queue.empty?
+      end
+
+      def shift_record
+        @current_record = @queue.shift_record
+        @records << @current_record if @current_record
+        @current_record
+      end
+
+      def shift
+        shift_record&.value
+      end
+
+      def each_remaining
+        return enum_for(:each_remaining) unless block_given?
+
+        yield shift until empty?
+      end
+
+      def playback
+        Runtime::InputQueue.new(@records)
+      end
+    end
+
     def initialize(program, opts = {}, instruction_budget: nil)
       @program = program
       @opts = opts
@@ -52,8 +85,8 @@ module Rjq
       output = []
       each_block(instructions, input, context) { |value| output << value }
       output
-    rescue ErrorValue => e
-      raise ErrorValue.new(e.value, outputs: output + Array(e.outputs))
+    rescue Rjq::RuntimeError => e
+      raise e.prepend_outputs(output)
     rescue BreakSignal => e
       raise BreakSignal.new(e.label, e.value, outputs: output + Array(e.outputs))
     end
@@ -68,11 +101,15 @@ module Rjq
       stack = []
       instructions.each_with_index do |instruction, index|
         execute_path_instruction(instruction, stack, input, context)
-      rescue InvalidPathError => e
+      rescue Rjq::RuntimeError => e
         remaining = instructions[(index + 1)..].to_a
         raise if remaining.empty?
 
-        raise InvalidPathError.new(invalid_path_message(remaining, e.result, input, context), e.result)
+        if e.is_a?(InvalidPathError)
+          raise InvalidPathError.new(invalid_path_message(remaining, e.result, input, context), e.result,
+                                     outputs: e.outputs)
+        end
+        raise
       end
       stack.pop || []
     end
@@ -292,7 +329,12 @@ module Rjq
     end
 
     def path_stream(block, input, context)
-      deferred_values_stream { paths_for_block(block.instructions, input, context) }
+      Enumerator.new do |yielder|
+        paths_for_block(block.instructions, input, context).each { |path| yielder << path }
+      rescue Rjq::RuntimeError => e
+        Array(e.outputs).each { |path| yielder << path }
+        raise
+      end
     end
 
     def array_stream(block, input, context)
@@ -307,7 +349,8 @@ module Rjq
 
     def binding_stream(spec, input, context)
       flat_map_stream(each_block(spec.fetch(:source).instructions, input, context)) do |value|
-        each_block(spec.fetch(:body).instructions, input, AST.bind_pattern(context, spec.fetch(:pattern), value))
+        bound = AST.bind_pattern(context, spec.fetch(:pattern), value)
+        bound ? each_block(spec.fetch(:body).instructions, input, bound) : empty_stream
       end
     end
 
@@ -382,6 +425,7 @@ module Rjq
           accumulator = initial
           each_block(spec.fetch(:generator).instructions, input, context).each do |value|
             ctx = AST.bind_pattern(context, spec.fetch(:pattern), value)
+            next unless ctx
             did_update = false
             each_block(spec.fetch(:update).instructions, accumulator, ctx).each do |next_accumulator|
               did_update = true
@@ -400,6 +444,7 @@ module Rjq
           accumulator = initial
           each_block(spec.fetch(:generator).instructions, input, context).each do |value|
             ctx = AST.bind_pattern(context, spec.fetch(:pattern), value)
+            next unless ctx
             did_update = false
             each_block(spec.fetch(:update).instructions, accumulator, ctx).each do |next_accumulator|
               did_update = true
@@ -779,7 +824,14 @@ module Rjq
     def execute_path_instruction(instruction, stack, input, context)
       charge_instruction!
       case instruction.op
-      when :load_input then stack << [[]]
+      when :load_input then stack << [context.current_path]
+      when :variable
+        if context.binding_variable_paths.key?(instruction.arg1)
+          stack << [context.binding_variable_paths.fetch(instruction.arg1)]
+        else
+          result = execute_block([instruction], input, context).first
+          raise InvalidPathError.new(invalid_path_message([instruction], result, input, context), result)
+        end
       when :field then stack << stack.pop.map { |path| path + [instruction.arg1] }
       when :index_const then stack << stack.pop.map do |path|
         path + [path_index(Path.get(input, path), instruction.arg1)]
@@ -789,7 +841,13 @@ module Rjq
       when :slice_filter then stack << slice_filter_paths(stack.pop, instruction.arg1, input, context)
       when :each then stack << each_paths(stack.pop, input)
       when :pipe then stack << pipe_paths(stack.pop, instruction.arg1, input, context)
-      when :append then stack << (stack.pop + paths_for_block(instruction.arg1.instructions, input, context))
+      when :append
+        left = stack.pop
+        begin
+          stack << (left + paths_for_block(instruction.arg1.instructions, input, context))
+        rescue Rjq::RuntimeError => e
+          raise e.prepend_outputs(left)
+        end
       when :binding then stack << binding_paths(instruction.arg1, input, context)
       when :branch then stack << branch_paths(instruction, input, context)
       when :optional then stack << optional_paths(instruction.arg1, input, context)
@@ -839,7 +897,8 @@ module Rjq
     def pipe_paths(paths, block, input, context)
       paths.flat_map do |path|
         value = Path.get(input, path)
-        paths_for_block(block.instructions, value, context).map { |suffix| path + suffix }
+        nested = context.with_path_state(current_path: [])
+        paths_for_block(block.instructions, value, nested).map { |suffix| path + suffix }
       end
     rescue InvalidPathError => e
       raise InvalidPathError.new(invalid_path_message(block.instructions, e.result, input, context), e.result)
@@ -847,8 +906,85 @@ module Rjq
 
     def binding_paths(spec, input, context)
       execute_filter(spec.fetch(:source), input, context).flat_map do |value|
-        paths_for_block(spec.fetch(:body).instructions, input, AST.bind_pattern(context, spec.fetch(:pattern), value))
+        pattern = spec.fetch(:pattern)
+        candidates = pattern[0] == :alternatives ? pattern[1] : [pattern]
+        candidate_index = 0
+        validated = []
+        loop do
+          candidate = candidates.fetch(candidate_index)
+          begin
+            bound, pattern_path, relative_variables =
+              AST.bind_pattern_candidate_with_path(context, pattern, candidate, value)
+          rescue Rjq::RuntimeError => e
+            candidate_index += 1
+            next if candidate_index < candidates.length
+
+            raise e.prepend_outputs(validated)
+          end
+
+          base_path = context.current_path + pattern_path
+          variable_paths = context.binding_variable_paths.to_h { |name, _path| [name, base_path] }
+          variable_paths.merge!(relative_variables.transform_values { |path| context.current_path + path })
+          AST.validate_pattern_path(input, base_path)
+          scoped = bound.with_path_state(current_path: base_path, variables: variable_paths)
+          results, paths, error = execute_with_replayed_paths(spec.fetch(:body), input, scoped)
+
+          if candidates[(candidate_index + 1)..].to_a.any? { |item| item[0] == :var }
+            paths = paths.each_with_index.map do |path, index|
+              path == base_path && !AST.binding_path_matches?(input, path, results[index]) ? context.current_path : path
+            end
+          end
+
+          missing_names = AST.pattern_variable_names(pattern) - AST.pattern_variable_names(candidate)
+          missing_paths = missing_names.filter_map { |name| variable_paths[name] }
+          switch_at = paths.index { |path| path != base_path && missing_paths.include?(path) } unless value.nil?
+          if switch_at && candidate_index + 1 < candidates.length
+            begin
+              validated.concat(AST.validate_binding_results(input, results.first(switch_at), paths.first(switch_at)))
+            rescue Rjq::RuntimeError => e
+              raise e.prepend_outputs(validated)
+            end
+            candidate_index += 1
+            next
+          end
+
+          begin
+            validated.concat(AST.validate_binding_results(input, results, paths))
+          rescue Rjq::RuntimeError => e
+            raise e.prepend_outputs(validated)
+          end
+          raise error.prepend_outputs(validated) if error
+
+          break validated
+        end
       end
+    end
+
+    def execute_with_replayed_paths(block, input, context)
+      queue = context.options[:input_queue]
+      recording = queue && RecordingInputQueue.new(queue)
+      first_context = recording ? context.with_options(context.options.merge(input_queue: recording,
+                                                                              remaining_inputs: recording)) : context
+      values = []
+      error = nil
+      begin
+        values = execute_filter(block, input, first_context)
+      rescue Rjq::RuntimeError => e
+        values = e.take_outputs
+        error = e
+      end
+
+      playback = recording&.playback
+      second_context = playback ? context.with_options(context.options.merge(input_queue: playback,
+                                                                              remaining_inputs: playback)) : context
+      paths = []
+      begin
+        paths = paths_for_block(block.instructions, input, second_context)
+      rescue Rjq::RuntimeError => e
+        paths = e.take_outputs
+        error ||= e
+      end
+      [values, paths, error]
     end
 
     def branch_paths(instruction, input, context)
@@ -869,6 +1005,7 @@ module Rjq
     def call_paths(instruction, input, context)
       name = instruction.arg1
       arg_blocks = instruction.arg2
+      return [context.current_path] if %w[debug stderr].include?(name)
       if name == 'select' && arg_blocks.length == 1
         return execute_filter(arg_blocks.first, input, context).filter_map { |value| [] if Value.truthy?(value) }
       end
@@ -897,6 +1034,8 @@ module Rjq
       end
 
       result = call_builtin_or_function(instruction, input, context)
+      return [] if result.empty?
+
       result = result.first if result.length == 1
       raise InvalidPathError.new(invalid_path_message([instruction], result, input, context), result)
     end
@@ -1107,8 +1246,15 @@ module Rjq
     end
 
     def path_index(value, index)
+      unless index.is_a?(String) || index.is_a?(Numeric)
+        raise TypeError, "Cannot index #{Value.type_of(value)} with #{Value.type_of(index)}"
+      end
       return index unless index.is_a?(Numeric)
       return index if index.respond_to?(:nan?) && index.nan?
+      if index.respond_to?(:infinite?) && index.infinite?
+        raise RuntimeError, 'Out of bounds negative array index' if index.negative? && !value.is_a?(Hash)
+        raise TypeError, "Cannot index #{Value.type_of(value)} with number"
+      end
 
       index = index.floor
       return index unless index.negative?

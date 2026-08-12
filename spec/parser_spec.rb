@@ -28,4 +28,11 @@ RSpec.describe Rjq::Parser do
       filename: '/tmp/filter.jq', line: 2, column: 1, start_offset: 1, end_offset: 9
     )
   end
+
+  it 'parses leading-decimal jq number literals' do
+    value = described_class.new('.00005').parse.body.value
+
+    expect(value).to be_a(Rjq::Number)
+    expect(value.literal).to eq('0.00005')
+  end
 end
