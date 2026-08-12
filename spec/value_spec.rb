@@ -63,4 +63,17 @@ RSpec.describe Rjq::Value do
     expect { described_class.deep_copy(cyclic) }.to raise_error(Rjq::TypeError, /cyclic JSON value/)
     expect { described_class.deep_copy({ answer: 42 }) }.to raise_error(Rjq::TypeError, /object key must be a string/)
   end
+
+
+  it 'validates host values iteratively' do
+    value = 'leaf'
+    10_000.times { value = [value] }
+    expect(described_class.validate!(value)).to equal(value)
+
+    cyclic = []
+    cyclic << cyclic
+    expect { described_class.validate!(cyclic) }.to raise_error(Rjq::TypeError, /cyclic JSON value/)
+    expect { described_class.validate!({ answer: 42 }) }.to raise_error(Rjq::TypeError, /object key must be a string/)
+    expect { described_class.validate!(Object.new) }.to raise_error(Rjq::TypeError, /unsupported value type/)
+  end
 end

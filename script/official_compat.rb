@@ -51,7 +51,7 @@ groups.each do |fail_group, lines|
       unless expected_values.length == actual.length && expected_values.zip(actual).all? { |left, right| Rjq::Value.equal?(left, right) }
         failures << [program, input, expected, actual.map { |value| Rjq::JSON::Dumper.dump(value, indent: nil) }]
       end
-    rescue Exception => e
+    rescue StandardError => e
       failures << [program, input, expected, ["ERROR #{e.class}: #{e.message}"]]
     end
   end

@@ -63,6 +63,14 @@ module Rjq
     HELP
 
     class OptionError < StandardError; end
+    class EarlyExit < StandardError
+      attr_reader :status
+
+      def initialize(status)
+        @status = status
+        super()
+      end
+    end
 
     def initialize(argv, stdin:, stdout:, stderr:)
       @argv = argv.dup
@@ -79,7 +87,7 @@ module Rjq
       return run_tests if @opts[:run_tests]
 
       @opts[:stderr] = @stderr
-      @opts[:color] = @stdout.tty? if @opts[:color].nil?
+      @opts[:color] = @stdout.tty? && !ENV.key?('NO_COLOR') if @opts[:color].nil?
       last = nil
       count = 0
       runtime = Runtime.new(@filter || '.', @opts)
@@ -94,6 +102,8 @@ module Rjq
     rescue HaltError => e
       @stderr.puts(e.message) if e.value
       e.status
+    rescue EarlyExit => e
+      e.status
     rescue OptionError => e
       @stderr.puts(e.message)
       @stderr.print(OPTION_HELP)
@@ -106,6 +116,9 @@ module Rjq
       3
     rescue Rjq::RuntimeError => e
       @stderr.puts("rjq: runtime error: #{e.message}")
+      5
+    rescue SystemStackError
+      @stderr.puts('rjq: runtime error: recursion limit exceeded')
       5
     rescue Errno::EPIPE
       0
@@ -173,7 +186,9 @@ module Rjq
       when '--color-output' then @opts[:color] = true
       when '--monochrome-output' then @opts[:color] = false
       when '--allow-comments' then @opts[:allow_comments] = true
-      when '--indent' then @opts[:indent] = validate_indent(next_arg('--indent', '--indent takes one parameter'))
+      when '--indent'
+        @opts[:indent] = validate_indent(next_arg('--indent', '--indent takes one parameter'))
+        @opts[:tab] = false
       when '--arg' then bind_string(*next_args(2, '--arg takes two parameters (e.g. --arg varname value)'))
       when '--argjson' then bind_json(*next_args(2, '--argjson takes two parameters (e.g. --argjson varname text)'))
       when '--slurpfile' then bind_json_array(*next_args(2,
@@ -183,7 +198,6 @@ module Rjq
       when '--args' then consume_positional(json: false)
       when '--jsonargs' then consume_positional(json: true)
       when '--from-file' then @opts[:filter_file] = next_arg('--from-file')
-      when '--rcfile' then @opts[:rcfile] = next_arg('--rcfile')
       when '--run-tests' then parse_run_tests
       when '--build-configuration' then print_build_configuration_and_exit
       when '--version' then print_version_and_exit
@@ -398,17 +412,21 @@ module Rjq
 
     def print_version_and_exit
       @stdout.puts("rjq-#{VERSION}")
-      exit 0
+      raise EarlyExit, 0
     end
 
     def print_help_and_exit
       @stdout.print(HELP)
-      exit 0
+      raise EarlyExit, 0
     end
 
     def print_build_configuration_and_exit
-      @stdout.puts('--with-oniguruma=ruby-regexp --disable-maintainer-mode')
-      exit 0
+      @stdout.puts("rjq=#{VERSION}")
+      @stdout.puts("ruby=#{RUBY_VERSION}p#{RUBY_PATCHLEVEL} (#{RUBY_PLATFORM})")
+      @stdout.puts('regexp-engine=ruby')
+      @stdout.puts('native-math=fiddle-libm')
+      @stdout.puts('json-parser=incremental')
+      raise EarlyExit, 0
     end
   end
 end

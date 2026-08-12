@@ -7,6 +7,7 @@ module Rjq
     def initialize(ast, program:)
       @ast = ast
       @program = program
+      freeze
     end
 
     def instructions
@@ -25,6 +26,7 @@ module Rjq
   class BytecodeCompiler
     def initialize
       @constants = []
+      @constant_indices = {}
     end
 
     def compile(ast, module_metadata: {}, module_variables: {})
@@ -228,8 +230,12 @@ module Rjq
     end
 
     def const(value)
-      @constants << Value.deep_copy(value)
-      @constants.length - 1
+      copy = Value.deep_copy(value)
+      key = JSON::Dumper.dump(copy, indent: nil, sort_keys: true)
+      return @constant_indices.fetch(key) if @constant_indices.key?(key)
+
+      @constants << copy
+      @constant_indices[key] = @constants.length - 1
     end
 
     def instruction(op, arg1 = nil, arg2 = nil)
@@ -259,6 +265,7 @@ module Rjq
         module_variables: loaded.variables
       )
       SemanticAnalyzer.new(program).validate!
+      program.finalize!
       CompiledProgram.new(ast, program: program)
     end
 

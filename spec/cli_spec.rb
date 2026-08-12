@@ -170,6 +170,14 @@ RSpec.describe Rjq::CLI do
     expect(code).to eq(0)
     expect(out.string).to eq("1\n")
     expect(err.string).to eq("[\"DEBUG:\",1]\n")
+
+    out = StringIO.new
+    err = StringIO.new
+    code = described_class.new(['-nc', '1 | debug("message")'], stdin: StringIO.new, stdout: out,
+                                                                  stderr: err).run
+    expect(code).to eq(0)
+    expect(out.string).to eq("1\n")
+    expect(err.string).to eq("[\"DEBUG:\",\"message\"]\n")
   end
 
   it 'supports raw-output0 NUL separators' do
@@ -338,18 +346,19 @@ RSpec.describe Rjq::CLI do
   it 'prints build configuration' do
     out = StringIO.new
 
-    expect do
-      described_class.new(['--build-configuration'], stdin: StringIO.new, stdout: out, stderr: StringIO.new).run
-    end
-      .to raise_error(SystemExit) { |error| expect(error.status).to eq(0) }
-    expect(out.string).to include('--with-oniguruma=')
+    code = described_class.new(['--build-configuration'], stdin: StringIO.new, stdout: out,
+                                                          stderr: StringIO.new).run
+
+    expect(code).to eq(0)
+    expect(out.string).to include("ruby=#{RUBY_VERSION}")
+    expect(out.string).to include('regexp-engine=ruby')
+    expect(out.string).to include('native-math=fiddle-libm')
   end
 
   it 'prints jq-compatible help with all documented options' do
     out = StringIO.new
 
-    expect { described_class.new(['--help'], stdin: StringIO.new, stdout: out, stderr: StringIO.new).run }
-      .to raise_error(SystemExit) { |error| expect(error.status).to eq(0) }
+    expect(described_class.new(['--help'], stdin: StringIO.new, stdout: out, stderr: StringIO.new).run).to eq(0)
     expect(out.string).to include('--raw-output0')
     expect(out.string).to include('--slurpfile name file')
     expect(out.string).to include('--rawfile name file')
@@ -357,6 +366,28 @@ RSpec.describe Rjq::CLI do
     expect(out.string).to include('--jsonargs')
     expect(out.string).to include('--exit-status')
     expect(out.string).to include('--')
+  end
+
+  it 'returns version output without exiting the host process' do
+    out = StringIO.new
+
+    code = described_class.new(['--version'], stdin: StringIO.new, stdout: out, stderr: StringIO.new).run
+
+    expect(code).to eq(0)
+    expect(out.string).to eq("rjq-#{Rjq::VERSION}\n")
+  end
+
+  it 'lets the last indentation option win' do
+    spaces = StringIO.new
+    tabs = StringIO.new
+
+    described_class.new(['-n', '--tab', '--indent', '1', '[1]'], stdin: StringIO.new, stdout: spaces,
+                                                                    stderr: StringIO.new).run
+    described_class.new(['-n', '--indent', '1', '--tab', '[1]'], stdin: StringIO.new, stdout: tabs,
+                                                                    stderr: StringIO.new).run
+
+    expect(spaces.string).to eq("[\n 1\n]\n")
+    expect(tabs.string).to eq("[\n\t1\n]\n")
   end
 
   it 'returns option exit status for unknown and incomplete options' do
@@ -371,6 +402,11 @@ RSpec.describe Rjq::CLI do
 
     expect(code).to eq(2)
     expect(err.string).to include('--arg takes two parameters')
+
+    err = StringIO.new
+    code = described_class.new(['--rcfile', 'file', '.'], stdin: StringIO.new, stdout: StringIO.new, stderr: err).run
+    expect(code).to eq(2)
+    expect(err.string).to include('Unknown option --rcfile')
   end
 
   it 'supports jq --run-tests compatibility mode' do

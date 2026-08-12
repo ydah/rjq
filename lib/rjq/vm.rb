@@ -9,6 +9,8 @@ module Rjq
 
     def run(input_value)
       Enumerator.new do |yielder|
+        Value.validate!(input_value)
+        @opts.fetch(:variables, {}).each_value { |value| Value.validate!(value) }
         context = context_with_definitions(base_context)
         output_count = 0
         begin
@@ -101,46 +103,6 @@ module Rjq
       )
     end
 
-    def execute_instruction(instruction, stack, input, context)
-      case instruction.op
-      when :load_input then stack << [input]
-      when :load_const then stack << [Value.deep_copy(@program.program.constants.fetch(instruction.arg1))]
-      when :string_interp then stack << evaluate_string(instruction.arg1, input, context)
-      when :format then stack << evaluate_format(instruction.arg1, instruction.arg2, input, context)
-      when :variable then stack << evaluate_variable(instruction.arg1, context)
-      when :field then stack << stack.pop.flat_map { |value| [read_field(value, instruction.arg1)] }
-      when :index_const then stack << stack.pop.flat_map { |value| [read_index(value, instruction.arg1)] }
-      when :index_filter then stack << execute_index_filter(stack.pop, instruction.arg1, input, context)
-      when :slice_const then stack << stack.pop.flat_map do |value|
-        [read_slice(value, instruction.arg1, instruction.arg2)]
-      end
-      when :slice_filter then stack << execute_slice_filter(stack.pop, instruction.arg1, input, context)
-      when :each, :iterate then stack << stack.pop.flat_map { |value| each_value(value) }
-      when :path then stack << paths_for_block(instruction.arg1.instructions, input, context)
-      when :optional then stack << execute_optional(instruction.arg1, input, context)
-      when :pipe then stack << execute_pipe(stack.pop, instruction.arg1, context)
-      when :append then stack << execute_append(stack.pop, instruction.arg1, input, context)
-      when :binding then stack << execute_binding(instruction.arg1, input, context)
-      when :array then stack << [instruction.arg1 ? execute_filter(instruction.arg1, input, context) : []]
-      when :object then stack << execute_object(instruction.arg1, input, context)
-      when :branch then stack << execute_branch(instruction, input, context)
-      when :try then stack << execute_try(instruction.arg1, input, context)
-      when :reduce then stack << execute_reduce(instruction.arg1, input, context)
-      when :foreach then stack << execute_foreach(instruction.arg1, input, context)
-      when :label then stack << execute_label(instruction.arg1, instruction.arg2, input, context)
-      when :break then raise BreakSignal, instruction.arg1
-      when :unary then stack << execute_unary(instruction.arg1, instruction.arg2, input, context)
-      when :binary then stack << execute_binary(instruction.arg1, instruction.arg2, input, context)
-      when :assign then stack << execute_assignment(instruction.arg1, input, context)
-      when :call then stack << call_builtin_or_function(instruction, input, context)
-      when :recurse then stack << recurse_values(input)
-      when :scoped_def then stack << execute_filter(instruction.arg2, input,
-                                                    apply_definition(context, instruction.arg1))
-      when :emit then stack << [input]
-      else raise "unknown opcode #{instruction.op}"
-      end
-    end
-
     def execute_filter(block, input, context)
       execute_block(block.instructions, input, context)
     end
@@ -167,7 +129,7 @@ module Rjq
         read_slice(value, instruction.arg1, instruction.arg2)
       end
       when :slice_filter then stack << slice_filter_stream(stack.pop, instruction.arg1, input, context)
-      when :each, :iterate then stack << flat_map_stream(stack.pop) { |value| values_stream(each_value(value)) }
+      when :each then stack << flat_map_stream(stack.pop) { |value| values_stream(each_value(value)) }
       when :path then stack << path_stream(instruction.arg1, input, context)
       when :optional then stack << optional_stream(instruction.arg1, input, context)
       when :pipe then stack << pipe_stream(stack.pop, instruction.arg1, context)
@@ -188,7 +150,6 @@ module Rjq
       when :recurse then stack << recurse_stream(input)
       when :scoped_def then stack << each_block(instruction.arg2.instructions, input,
                                                 apply_definition(context, instruction.arg1))
-      when :emit then stack << value_stream(input)
       else raise "unknown opcode #{instruction.op}"
       end
     end
@@ -868,7 +829,7 @@ module Rjq
       when :index_filter then stack << index_filter_paths(stack.pop, instruction.arg1, input, context)
       when :slice_const then stack << slice_paths(stack.pop, input, instruction.arg1, instruction.arg2)
       when :slice_filter then stack << slice_filter_paths(stack.pop, instruction.arg1, input, context)
-      when :each, :iterate then stack << each_paths(stack.pop, input)
+      when :each then stack << each_paths(stack.pop, input)
       when :pipe then stack << pipe_paths(stack.pop, instruction.arg1, input, context)
       when :append then stack << (stack.pop + paths_for_block(instruction.arg1.instructions, input, context))
       when :binding then stack << binding_paths(instruction.arg1, input, context)
@@ -998,7 +959,7 @@ module Rjq
                                                                                     indent: nil)} of #{JSON::Dumper.dump(
                                                                                       result, indent: nil
                                                                                     )}"
-      when :each, :iterate
+      when :each
         "Invalid path expression near attempt to iterate through #{JSON::Dumper.dump(result, indent: nil)}"
       when :pipe
         invalid_path_message(instruction.arg1.instructions, result, input, context)
@@ -1127,19 +1088,6 @@ module Rjq
       else
         raise TypeError, "cannot slice #{Value.type_of(target)}"
       end
-    end
-
-    def recurse_values(input)
-      values = []
-      visit = lambda do |value|
-        values << value
-        case value
-        when Array then value.each { |item| visit.call(item) }
-        when Hash then value.each_value { |item| visit.call(item) }
-        end
-      end
-      visit.call(input)
-      values
     end
 
     def read_field(value, name)

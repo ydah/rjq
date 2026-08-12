@@ -2,6 +2,14 @@
 
 module Rjq
   class SemanticAnalyzer
+    PUSH_OPS = %i[
+      load_input load_const string_interp format variable path optional binding array object branch try reduce foreach
+      label unary binary assign call recurse scoped_def
+    ].freeze
+    TRANSFORM_OPS = %i[
+      field index_const index_filter slice_const slice_filter each pipe append
+    ].freeze
+
     def initialize(program)
       @program = program
     end
@@ -22,6 +30,7 @@ module Rjq
     end
 
     def validate_instructions(instructions, functions, filter_parameters)
+      validate_stack(instructions)
       instructions.each do |instruction|
         if instruction.op == :call
           validate_call(instruction, functions, filter_parameters)
@@ -32,6 +41,25 @@ module Rjq
         validate_nested(instruction.arg1, functions, filter_parameters)
         validate_nested(instruction.arg2, functions, filter_parameters)
       end
+    end
+
+    def validate_stack(instructions)
+      depth = 0
+      terminated = false
+      instructions.each do |instruction|
+        raise CompileError, "unknown opcode #{instruction.op}" unless Opcodes::ALL.include?(instruction.op)
+        raise CompileError, 'unreachable bytecode after break' if terminated
+
+        if PUSH_OPS.include?(instruction.op)
+          depth += 1
+        elsif TRANSFORM_OPS.include?(instruction.op)
+          raise CompileError, "bytecode stack underflow at #{instruction.op}" if depth.zero?
+        elsif instruction.op == :break
+          terminated = true
+        end
+      end
+      return if terminated
+      raise CompileError, "bytecode stack has #{depth} values, expected 1" unless depth == 1
     end
 
     def validate_call(instruction, functions, filter_parameters)

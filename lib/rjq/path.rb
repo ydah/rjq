@@ -82,19 +82,32 @@ module Rjq
 
     def paths(value, leaves_only: false)
       out = []
-      visit = lambda do |current, path|
+      stack = [[value, nil]]
+      until stack.empty?
+        current, path_node = stack.pop
         scalar = !(current.is_a?(Array) || current.is_a?(Hash))
-        out << path if path.empty? || !leaves_only || scalar
-        case current
-        when Array
-          current.each_with_index { |item, index| visit.call(item, path + [index]) }
-        when Hash
-          current.each { |key, item| visit.call(item, path + [key]) }
-        end
+        out << materialize_path(path_node) if path_node.nil? || !leaves_only || scalar
+        children = if current.is_a?(Array)
+                     current.each_with_index.map { |item, index| [item, [path_node, index]] }
+                   elsif current.is_a?(Hash)
+                     current.map { |key, item| [item, [path_node, key]] }
+                   else
+                     []
+                   end
+        stack.concat(children.reverse)
       end
-      visit.call(value, [])
       out
     end
+
+    def materialize_path(node)
+      path = []
+      while node
+        node, key = node
+        path << key
+      end
+      path.reverse
+    end
+    private_class_method :materialize_path
 
     def ensure_parent(value, path)
       current = value

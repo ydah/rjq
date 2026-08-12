@@ -36,6 +36,46 @@ module Rjq
       !(value.nil? || value == false)
     end
 
+    def validate!(value)
+      active = {}
+      stack = [[:value, value]]
+      until stack.empty?
+        type, item = stack.pop
+        if type == :leave
+          active.delete(item)
+          next
+        end
+
+        case item
+        when NilClass, TrueClass, FalseClass, Numeric
+          next
+        when String
+          raise TypeError, 'invalid UTF-8 string' unless item.encoding == Encoding::UTF_8 && item.valid_encoding?
+        when Array
+          enter_validation_container!(item, active)
+          stack << [:leave, item.object_id]
+          item.reverse_each { |child| stack << [:value, child] }
+        when Hash
+          invalid = item.keys.find { |key| !key.is_a?(String) }
+          raise TypeError, "object key must be a string, got #{invalid.class}" if invalid
+
+          enter_validation_container!(item, active)
+          stack << [:leave, item.object_id]
+          item.values.reverse_each { |child| stack << [:value, child] }
+        else
+          raise TypeError, "unsupported value type: #{item.class}"
+        end
+      end
+      value
+    end
+
+    def enter_validation_container!(value, active)
+      raise TypeError, 'cyclic JSON value' if active[value.object_id]
+
+      active[value.object_id] = true
+    end
+    private_class_method :enter_validation_container!
+
     def equal?(left, right)
       left_type = type_of(left)
       right_type = type_of(right)

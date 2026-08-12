@@ -5,7 +5,7 @@ module Rjq
     ALL = %i[
       load_input load_const string_interp format variable field index_const index_filter slice_const slice_filter
       each path optional pipe append binding array object branch try reduce foreach label break unary binary assign
-      call recurse scoped_def emit
+      call recurse scoped_def
     ].freeze
 
     MNEMONICS = ALL.to_h { |opcode| [opcode, opcode.to_s] }.freeze
@@ -63,6 +63,16 @@ module Rjq
       lines.join("\n")
     end
 
+    def finalize!
+      freeze_value(instructions)
+      freeze_value(constants)
+      freeze_value(subroutines)
+      freeze_value(definitions)
+      freeze_value(module_metadata)
+      freeze_value(module_variables)
+      freeze
+    end
+
     private
 
     def append_disasm(lines, block, name, indent)
@@ -75,8 +85,41 @@ module Rjq
     end
 
     def append_nested(lines, instruction, indent)
-      [instruction.arg1, instruction.arg2].flatten.each_with_index do |arg, index|
-        append_disasm(lines, arg.instructions, "block#{index}", indent) if arg.is_a?(BytecodeBlock)
+      append_nested_value(lines, instruction.arg1, indent, 'arg1')
+      append_nested_value(lines, instruction.arg2, indent, 'arg2')
+    end
+
+    def append_nested_value(lines, value, indent, name)
+      case value
+      when BytecodeBlock
+        append_disasm(lines, value.instructions, name, indent)
+      when BytecodeFunctionDefinition
+        append_disasm(lines, value.body.instructions, "#{name}:#{value.name}/#{value.params.length}", indent)
+      when Array
+        value.each_with_index { |item, index| append_nested_value(lines, item, indent, "#{name}[#{index}]") }
+      when Hash
+        value.each { |key, item| append_nested_value(lines, item, indent, "#{name}.#{key}") }
+      end
+    end
+
+    def freeze_value(root)
+      stack = [root]
+      seen = {}
+      until stack.empty?
+        value = stack.pop
+        next if value.nil? || seen[value.object_id]
+
+        seen[value.object_id] = true
+        case value
+        when Array
+          stack.concat(value)
+        when Hash
+          stack.concat(value.keys)
+          stack.concat(value.values)
+        when Struct
+          stack.concat(value.to_a)
+        end
+        value.freeze
       end
     end
   end

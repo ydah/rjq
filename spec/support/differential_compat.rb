@@ -42,6 +42,13 @@ module DifferentialCompat
     Case.new(name: 'format csv', filter: '["a",1,true,null] | format("csv")', input: '', flags: ['-n']),
     Case.new(name: 'regex m flag', filter: '"a\nb" | test("a.b"; "m")', input: '', flags: ['-n']),
     Case.new(name: 'regex s flag', filter: '"a\nb" | test("a.b"; "s")', input: '', flags: ['-n']),
+    Case.new(name: 'generated sub replacement', filter: '"a" | sub("a"; ["x","y"][])', input: '', flags: ['-n']),
+    Case.new(name: 'generated gsub replacement',
+             filter: '"ab" | gsub("(?<x>.)"; [.x|ascii_upcase,ascii_downcase][])', input: '', flags: ['-n']),
+    Case.new(name: 'fractional stream counts', filter: '[nth(1.9;range(5)),limit(1.9;range(5))]',
+             input: '', flags: ['-n']),
+    Case.new(name: 'empty indices', filter: '"abc" | [indices("")]', input: '', flags: ['-n']),
+    Case.new(name: 'negative combinations', filter: '[1,2] | combinations(-1)', input: '', flags: ['-n']),
     Case.new(name: 'unknown function without input', filter: 'does_not_exist', input: '', flags: []),
     Case.new(name: 'invalid builtin arity', filter: 'length(1)', input: '', flags: ['-n'])
   ].freeze

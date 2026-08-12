@@ -138,7 +138,7 @@ module Rjq
       when 'input_line_number'
         [current_input_record(context)&.line || context.options.fetch(:current_line, 1)]
       when 'debug', 'stderr'
-        emit_diagnostic(name, input, context)
+        emit_diagnostic(name, input, context, args)
       when 'null'
         [nil]
       when 'true'
@@ -362,7 +362,7 @@ module Rjq
       when '@base64'
         [[to_string(input)].pack('m0')]
       when '@base64d'
-        [assert_string(input).unpack1('m0').force_encoding(Encoding::UTF_8)]
+        [decode_base64(input)]
       when '@base32'
         [base32_encode(to_string(input))]
       when '@base32d'
@@ -452,12 +452,13 @@ module Rjq
       context.options[:input_queue]&.current_record
     end
 
-    def emit_diagnostic(name, input, context)
+    def emit_diagnostic(name, input, context, args)
       io = context.options[:stderr] || $stderr
+      diagnostic = args.empty? ? input : eval_arg(args, 0, input, context)
       if name == 'debug'
-        io.puts(JSON::Dumper.dump(['DEBUG:', input], indent: nil))
+        io.puts(JSON::Dumper.dump(['DEBUG:', diagnostic], indent: nil))
       else
-        io.puts(to_string(input))
+        io.puts(to_string(diagnostic))
       end
       [input]
     end
@@ -732,13 +733,13 @@ module Rjq
       raise TypeError, 'implode input must be an array' unless input.is_a?(Array)
 
       input.map do |item|
-        unless item.is_a?(Numeric) && item.finite?
+        unless item.is_a?(Numeric) && !item.to_f.nan?
           raise TypeError,
                 "#{Value.type_of(item)} (#{JSON::Dumper.dump(item,
                                                              indent: nil)}) can't be imploded, unicode codepoint needs to be numeric"
         end
 
-        codepoint = item.to_i
+        codepoint = item.to_f.finite? ? item.to_i : -1
         codepoint = 0xFFFD if codepoint.negative? || codepoint > 0x10FFFF || codepoint.between?(0xD800, 0xDFFF)
         [codepoint].pack('U')
       end.join
@@ -865,31 +866,31 @@ module Rjq
     end
 
     def to_stream(value)
-      out = []
-      visit = lambda do |current, path|
-        if current.is_a?(Array)
-          if current.empty?
-            out << [path, []]
-          else
-            last_path = path
-            current.each_with_index { |item, index| last_path = visit.call(item, path + [index]) }
-            out << [last_path]
+      Enumerator.new do |yielder|
+        stack = [[:visit, value, []]]
+        until stack.empty?
+          type, current, path = stack.pop
+          if type == :emit
+            yielder << current
+            next
           end
-        elsif current.is_a?(Hash)
-          if current.empty?
-            out << [path, {}]
+
+          children = if current.is_a?(Array)
+                       current.each_with_index.map { |item, index| [item, path + [index]] }
+                     elsif current.is_a?(Hash)
+                       current.map { |key, item| [item, path + [key]] }
+                     end
+          if children.nil?
+            yielder << [path, current]
+          elsif children.empty?
+            yielder << [path, current.class.new]
           else
-            last_path = path
-            current.each { |key, item| last_path = visit.call(item, path + [key]) }
-            out << [last_path]
+            last_component = current.is_a?(Array) ? current.length - 1 : current.keys.last
+            stack << [:emit, [path + [last_component]], nil]
+            children.reverse_each { |child, child_path| stack << [:visit, child, child_path] }
           end
-        else
-          out << [path, current]
         end
-        path
       end
-      visit.call(value, [])
-      out
     end
 
     def from_stream(stream)
@@ -1068,6 +1069,8 @@ module Rjq
         positions = []
         offset = 0
         needle = assert_string(needle)
+        return [] if needle.empty?
+
         while (found = input.index(needle, offset))
           positions << found
           offset = found + 1
@@ -1086,6 +1089,8 @@ module Rjq
     def combinations(input, context, args)
       if args.length == 1 && eval_arg(args, 0, input, context).is_a?(Numeric)
         count = eval_arg(args, 0, input, context).to_i
+        return [[]] if count.negative?
+
         arrays = Array.new(count) { assert_array(input) }
       else
         source = args.empty? ? assert_array(input) : eval_arg(args, 0, input, context)
@@ -1125,7 +1130,7 @@ module Rjq
 
     def nth(input, context, args)
       args.fetch(0).eval(input, context).flat_map do |raw_index|
-        index = numeric(raw_index).to_i
+        index = numeric(raw_index).ceil
         raise RuntimeError, "nth doesn't support negative indices" if index.negative?
 
         values = args.length > 1 ? args[1].eval(input, context) : assert_array(input)
@@ -1135,7 +1140,7 @@ module Rjq
 
     def limit(input, context, args)
       args.fetch(0).eval(input, context).flat_map do |raw_count|
-        count = numeric(raw_count).to_i
+        count = numeric(raw_count).ceil
         next [] if count <= 0
 
         args.fetch(1).take(input, context, count)
@@ -1327,7 +1332,7 @@ module Rjq
     def substitute(input, context, args, global:)
       string = assert_string(input)
       regex, = regexp(input, context, [args.fetch(0)] + args[2..].to_a)
-      replacement_filters(args.fetch(1)).map do |replacement_filter|
+      replacement_filters(args.fetch(1)).flat_map do |replacement_filter|
         if global
           gsub_with_filter(string, regex, replacement_filter,
                            context)
@@ -1346,25 +1351,39 @@ module Rjq
 
     def sub_with_filter(string, regex, replacement_filter, context)
       match = regex.match(string)
-      return string unless match
+      return [string] unless match
 
-      string[0...match.begin(0)] + replacement_for(replacement_filter, match, context) + string[match.end(0)..].to_s
+      replacements_for(replacement_filter, match, context).map do |replacement|
+        string[0...match.begin(0)] + replacement + string[match.end(0)..].to_s
+      end
     end
 
     def gsub_with_filter(string, regex, replacement_filter, context)
-      out = +''
-      offset = 0
-      string.to_enum(:scan, regex).each do
-        match = Regexp.last_match
-        out << string[offset...match.begin(0)].to_s
-        out << replacement_for(replacement_filter, match, context)
-        offset = match.end(0)
+      matches = string.to_enum(:scan, regex).map { Regexp.last_match }
+      return [string] if matches.empty?
+
+      first_replacements = replacements_for(replacement_filter, matches.first, context)
+      first_replacements.each_index.filter_map do |branch|
+        out = +''
+        offset = 0
+        complete = matches.each_with_index.all? do |match, index|
+          replacements = index.zero? ? first_replacements : replacements_for(replacement_filter, match, context)
+          replacement = replacements[branch]
+          next false unless replacement
+
+          out << string[offset...match.begin(0)].to_s
+          out << replacement
+          offset = match.end(0)
+          true
+        end
+        next unless complete
+
+        out << string[offset..].to_s
       end
-      out << string[offset..].to_s
     end
 
-    def replacement_for(replacement_filter, match, context)
-      assert_string(replacement_filter.eval(capture_values(match), context).first)
+    def replacements_for(replacement_filter, match, context)
+      replacement_filter.eval(capture_values(match), context).map { |value| assert_string(value) }
     end
 
     def capture_values(match)
@@ -1435,22 +1454,48 @@ module Rjq
 
     def base32_encode(input)
       alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
-      bits = input.bytes.map { |byte| byte.to_s(2).rjust(8, '0') }.join
-      bits += '0' * ((5 - (bits.length % 5)) % 5)
-      encoded = bits.scan(/.{5}/).map { |chunk| alphabet[chunk.to_i(2)] }.join
+      encoded = +''
+      buffer = 0
+      bits = 0
+      input.each_byte do |byte|
+        buffer = (buffer << 8) | byte
+        bits += 8
+        while bits >= 5
+          bits -= 5
+          encoded << alphabet[(buffer >> bits) & 31]
+        end
+        buffer &= (1 << bits) - 1
+      end
+      encoded << alphabet[(buffer << (5 - bits)) & 31] if bits.positive?
       encoded + ('=' * ((8 - (encoded.length % 8)) % 8))
+    end
+
+    def decode_base64(input)
+      string = assert_string(input)
+      string.unpack1('m0').force_encoding(Encoding::UTF_8)
+    rescue ArgumentError
+      raise RuntimeError, "string (#{JSON::Dumper.dump(input, indent: nil)}) is not valid base64 data"
     end
 
     def base32_decode(input)
       alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
       clean = input.upcase.delete('=')
-      bits = clean.each_char.map do |char|
+      output = +''.b
+      buffer = 0
+      bits = 0
+      clean.each_char do |char|
         index = alphabet.index(char)
         raise RuntimeError, "invalid base32 character #{char.inspect}" unless index
 
-        index.to_s(2).rjust(5, '0')
-      end.join
-      bits[0, (bits.length / 8) * 8].scan(/.{8}/).map { |chunk| chunk.to_i(2) }.pack('C*')
+        buffer = (buffer << 5) | index
+        bits += 5
+        if bits >= 8
+          bits -= 8
+          output << ((buffer >> bits) & 0xFF)
+          buffer &= (1 << bits) - 1
+        end
+      end
+      output
     end
 
     def input_values(input, context, filter)

@@ -47,4 +47,31 @@ RSpec.describe Rjq::VM do
     expect(Rjq.compile('1 + (1, error)').run(nil).next).to eq(2)
     expect(Rjq.compile('def f(g): g; f(1, error)').run(nil).next).to eq(1)
   end
+
+  it 'deduplicates constants and freezes executable bytecode' do
+    compiled = Rjq.compile('["same", "same"]')
+
+    expect(compiled.program.constants).to eq(['same'])
+    expect(compiled).to be_frozen
+    expect(compiled.program).to be_frozen
+    expect(compiled.program.instructions).to be_frozen
+    expect { compiled.program.constants << 'changed' }.to raise_error(FrozenError)
+  end
+
+  it 'shows blocks nested inside bytecode operand hashes' do
+    disassembly = Rjq.compile('if true then 1 else 2 end').disasm
+
+    expect(disassembly).to include('== arg2[0] ==')
+    expect(disassembly).to include('== arg2[1] ==')
+  end
+
+  it 'rejects invalid bytecode stacks and unknown opcodes' do
+    underflow = Rjq::Program.new(instructions: [Rjq::Instruction.new(op: :field, arg1: 'x')])
+    unknown = Rjq::Program.new(instructions: [Rjq::Instruction.new(op: :unknown)])
+
+    expect { Rjq::SemanticAnalyzer.new(underflow).validate! }
+      .to raise_error(Rjq::CompileError, /stack underflow/)
+    expect { Rjq::SemanticAnalyzer.new(unknown).validate! }
+      .to raise_error(Rjq::CompileError, /unknown opcode/)
+  end
 end

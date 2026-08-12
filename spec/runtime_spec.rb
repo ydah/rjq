@@ -29,6 +29,19 @@ RSpec.describe Rjq do
     10_000.times { nested = [nested] }
 
     expect(described_class.run('recurse', nested).to_a.length).to eq(10_001)
+    expect(described_class.run('leaf_paths', nested).to_a).to eq([[0] * 10_000])
+  end
+
+
+  it 'streams deeply nested values without Ruby recursion' do
+    nested = 0
+    2_000.times { nested = [nested] }
+
+    events = described_class.run('tostream', nested).to_a
+
+    expect(events.first).to eq([[0] * 2_000, 0])
+    expect(events.last).to eq([[0]])
+    expect(events.length).to eq(2_001)
   end
 
   it 'lets try/catch handle builtin runtime errors' do
@@ -189,6 +202,22 @@ RSpec.describe Rjq do
       .to raise_error(Rjq::TypeError, /not valid in a csv row/)
   end
 
+  it 'preserves generated regex replacements and validates base64 input' do
+    expect(described_class.run('"a" | sub("a"; ["x","y"][])', nil).to_a).to eq(%w[x y])
+    expect(described_class.run('"ab" | gsub("(?<x>.)"; [.x|ascii_upcase,ascii_downcase][])', nil).to_a)
+      .to eq(%w[AB ab])
+    expect(described_class.run('try ("@@" | @base64d) catch .', nil).to_a)
+      .to eq(['string ("@@") is not valid base64 data'])
+  end
+
+  it 'matches fractional stream counts and edge-case collection builtins' do
+    expect(described_class.run('[nth(1.9;range(5)),limit(1.9;range(5))]', nil).to_a).to eq([[2, 0, 1]])
+    expect(described_class.run('[1,2] | combinations(-1)', nil).to_a).to eq([[]])
+    expect(described_class.run('"abc" | [indices("")]', nil).to_a).to eq([[[]]])
+    expect(described_class.run('[[infinite],[-infinite],[-1],[1114112],[55296]] | map(implode)', nil).to_a)
+      .to eq([["�", "�", "�", "�", "�"]])
+  end
+
   it 'reports program origins and the configured module search list' do
     opts = { source_path: '/tmp/filter.jq', library_path: ['lib'] }
     origins = described_class.run('[get_jq_origin, get_prog_origin, get_search_list]', nil, opts).to_a.first
@@ -235,6 +264,15 @@ RSpec.describe Rjq do
   it 'uses variables supplied by the host' do
     program = described_class.compile('$x + 1')
     expect(program.run(nil, variables: { 'x' => 2 }).to_a).to eq([3])
+  end
+
+  it 'rejects non-JSON and cyclic host inputs before evaluation' do
+    cyclic = []
+    cyclic << cyclic
+
+    expect { described_class.run('.', cyclic).to_a }.to raise_error(Rjq::TypeError, /cyclic JSON value/)
+    expect { described_class.run('.', { answer: 42 }).to_a }
+      .to raise_error(Rjq::TypeError, /object key must be a string/)
   end
 
   it 'runs reduce and foreach' do
