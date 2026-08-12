@@ -723,10 +723,28 @@ module Rjq
 
     def split(input, context, args)
       string = assert_string(input)
+      if args.length > 1
+        regex, flags = regexp(input, context, args)
+        matches = string.to_enum(:scan, regex).map { Regexp.last_match }
+        matches.reject! { |match| match[0].empty? } if flags.include?('n')
+        return split_at_matches(string, matches)
+      end
+
       separator = assert_string(eval_arg(args, 0, input, context))
       return string.each_char.to_a if separator.empty?
 
       string.split(separator, -1)
+    end
+
+    def split_at_matches(string, matches)
+      return [string] if matches.empty?
+
+      offset = 0
+      matches.map do |match|
+        part = string[offset...match.begin(0)].to_s
+        offset = match.end(0)
+        part
+      end << string[offset..].to_s
     end
 
     def implode(input)

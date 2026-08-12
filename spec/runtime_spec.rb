@@ -250,6 +250,22 @@ RSpec.describe Rjq do
       .to raise_error(Rjq::TypeError, /not valid in a csv row/)
   end
 
+  it 'supports regex split flags and ignores capture groups in split output' do
+    expect(described_class.run('"aBa" | split("b"; "i")', nil).to_a).to eq([%w[a a]])
+    expect(described_class.run('"a1b2" | split("([0-9])"; "")', nil).to_a).to eq([["a", "b", ""]])
+    expect(described_class.run('"abc" | split(""; "")', nil).to_a).to eq([["", "a", "b", "c", ""]])
+    expect(described_class.run('"abc" | split(""; "n")', nil).to_a).to eq([["abc"]])
+  end
+
+  it 'matches jq integer remainder and empty string division semantics' do
+    filter = '[1.5%1, (-1.5)%1, 5.9%2.1, (-5.9)%2.1, 0.1%(-2), (-0.1)%2]'
+    expect(described_class.run(filter, nil).to_a).to eq([[0, 0, 1, -1, 0, 0]])
+    expect(described_class.run('[infinite%2, (-infinite)%3, 2%infinite]', nil).to_a).to eq([[1, -2, 2]])
+    expect(described_class.run('["ab"/"", ""/""]', nil).to_a).to eq([[%w[a b], []]])
+    expect { described_class.run('2%0.9', nil).to_a }
+      .to raise_error(Rjq::TypeError, /divisor is zero/)
+  end
+
   it 'preserves generated regex replacements and validates base64 input' do
     expect(described_class.run('"a" | sub("a"; ["x","y"][])', nil).to_a).to eq(%w[x y])
     expect(described_class.run('"ab" | gsub("(?<x>.)"; [.x|ascii_upcase,ascii_downcase][])', nil).to_a)

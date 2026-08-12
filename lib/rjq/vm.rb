@@ -1032,7 +1032,11 @@ module Rjq
     end
 
     def divide_values(left, right)
-      return left.split(right, -1) if left.is_a?(String) && right.is_a?(String)
+      if left.is_a?(String) && right.is_a?(String)
+        return left.each_char.to_a if right.empty?
+
+        return left.split(right, -1)
+      end
 
       left_number, right_number = numeric_pair(numeric(left), numeric(right))
       raise TypeError, division_by_zero_message(left_number, right_number, 'divided') if right_number.zero?
@@ -1042,13 +1046,21 @@ module Rjq
 
     def modulo_values(left, right)
       left_number, right_number = numeric_pair(numeric(left), numeric(right))
-      raise TypeError, division_by_zero_message(left_number, right_number, 'divided (remainder)') if right_number.zero?
-      if left_number.respond_to?(:infinite?) && left_number.infinite? && right_number.respond_to?(:infinite?) && right_number.infinite?
-        return (left_number.negative? ? -1 : 0)
-      end
-      return 0 if left_number.respond_to?(:infinite?) && left_number.infinite?
+      return Float::NAN if nan_number?(left_number) || nan_number?(right_number)
 
-      left_number.remainder(right_number)
+      left_integer = jq_integer(left_number)
+      right_integer = jq_integer(right_number)
+      raise TypeError, division_by_zero_message(left_number, right_number, 'divided (remainder)') if right_integer.zero?
+
+      remainder = left_integer.remainder(right_integer)
+      unsafe_integer?(remainder) ? remainder.to_f : remainder
+    end
+
+    def jq_integer(value)
+      return (2**63) - 1 if value.respond_to?(:infinite?) && value.infinite? == 1
+      return -(2**63) if value.respond_to?(:infinite?) && value.infinite? == -1
+
+      [[value.to_i, -(2**63)].max, (2**63) - 1].min
     end
 
     def numeric_pair(left, right)
