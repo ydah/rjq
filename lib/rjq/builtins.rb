@@ -1307,8 +1307,11 @@ module Rjq
     end
 
     def combinations(input, context, args)
-      if args.length == 1 && eval_arg(args, 0, input, context).is_a?(Numeric)
-        count = numeric(eval_arg(args, 0, input, context)).ceil
+      if args.length == 1
+        raw_count = eval_arg(args, 0, input, context)
+        raise RuntimeError, 'Range bounds must be numeric' unless raw_count.is_a?(Numeric)
+
+        count = raw_count.ceil
         return [[]] if count.negative?
 
         arrays = Array.new(count) { combination_array(input) }

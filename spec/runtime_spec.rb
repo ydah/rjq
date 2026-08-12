@@ -1221,6 +1221,8 @@ RSpec.describe Rjq do
       .to eq([[[1], [2], [1, 1], [1, 2], [2, 1], [2, 2], []]])
     expect { described_class.run('combinations(1.9)', 1).to_a }
       .to raise_error(Rjq::TypeError, 'Cannot iterate over number (1)')
+    expect { described_class.run('combinations([[1,2]])', [1, 2]).to_a }
+      .to raise_error(Rjq::RuntimeError, 'Range bounds must be numeric')
 
     deep = 20_000.times.reduce(1) { |value, _| [value] }
     expect(described_class.run('flatten', deep).to_a).to eq([[1]])

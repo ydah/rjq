@@ -319,6 +319,7 @@ module DifferentialCompat
     Case.new(name: 'fractional combinations count',
              filter: '[combinations(0.1),combinations(1.9),combinations(-0.1)]', input: '[1,2]'),
     Case.new(name: 'combinations scalar count error', filter: 'combinations(1.9)', input: '1'),
+    Case.new(name: 'combinations nonnumeric count error', filter: 'combinations([[1,2]])', input: '[1,2]'),
     Case.new(name: 'invalid setpath component', filter: 'setpath([true];1)', input: 'null'),
     Case.new(name: 'split collects generated flags', filter: 'split("a";("","i"))', input: '"ab"'),
     Case.new(name: 'splits collects generated flags', filter: 'splits("a";("","i"))', input: '"ab"'),
