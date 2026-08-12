@@ -924,17 +924,40 @@ module Rjq
     end
 
     def truncate_stream(input, context, args)
-      depth = numeric(input).floor
+      depth = input
       Enumerator.new do |yielder|
-        filter_stream(args.fetch(0), input, context).each do |event|
+        filter_stream(args.fetch(0), nil, context).each do |event|
           event = assert_array(event)
-          path = assert_array(event.fetch(0))
-          next unless path.length > depth
+          path = event[0]
+          next unless Value.compare(length(path), depth).positive?
 
-          truncated = path[depth..] || []
-          yielder << (event.length == 1 ? [truncated] : [truncated, event.fetch(1)])
+          updated = event.dup
+          updated[0] = truncate_path(path, depth)
+          yielder << updated
         end
       end
+    end
+
+    def truncate_path(path, depth)
+      return nil if path.nil?
+      unless path.is_a?(Array) || path.is_a?(String)
+        raise TypeError, "Cannot index #{Value.type_of(path)} with object"
+      end
+
+      start = truncate_boundary(depth, path.is_a?(String) ? path.each_char.count : path.length)
+      return path.each_char.drop(start).join if path.is_a?(String)
+
+      path.drop(start)
+    end
+
+    def truncate_boundary(depth, length)
+      return 0 if depth.nil? || (depth.respond_to?(:nan?) && depth.nan?)
+      raise TypeError, 'Array/string slice indices must be integers' unless depth.is_a?(Numeric)
+      return depth.negative? ? 0 : length if depth.respond_to?(:infinite?) && depth.infinite?
+
+      index = depth.floor
+      index += length if index.negative?
+      [[index, 0].max, length].min
     end
 
     def extreme(input, mode)

@@ -366,6 +366,28 @@ RSpec.describe Rjq do
       .to eq([[[0, 1], 'a']])
   end
 
+  it 'matches jq truncate stream boundary and malformed event behavior' do
+    event = [[[0], 'value']]
+    expect(described_class.run('nan | truncate_stream(([[0], "value"]))', nil).to_a).to eq(event)
+    expect(described_class.run('infinite | truncate_stream(([[0], "value"]))', nil).to_a).to eq([])
+    expect(described_class.run('(-infinite) | truncate_stream(([[0], "value"]))', nil).to_a).to eq(event)
+    expect(described_class.run('null | truncate_stream(([[0], "value"]))', nil).to_a).to eq(event)
+    expect(described_class.run('"1" | truncate_stream(([[0], "value"]))', nil).to_a).to eq([])
+    expect { described_class.run('false | truncate_stream(([[0], "value"]))', nil).to_a }
+      .to raise_error(Rjq::TypeError, 'Array/string slice indices must be integers')
+
+    expect(described_class.run('(-3) | truncate_stream(([[0,1], "value"]))', nil).to_a)
+      .to eq([[[0, 1], 'value']])
+    expect(described_class.run('1 | truncate_stream((["😀x", "value"]))', nil).to_a)
+      .to eq([['x', 'value']])
+    expect(described_class.run('0 | truncate_stream(([], [null], [[0], "value", "extra"]))', nil).to_a)
+      .to eq([[[0], 'value', 'extra']])
+  end
+
+  it 'evaluates the truncate stream filter with null input' do
+    expect(described_class.run('2 | truncate_stream(([[0,1,2], .]))', 7).to_a).to eq([[[2], nil]])
+  end
+
   it 'supports SQL-style INDEX and IN' do
     rows = [{ 'id' => 'a', 'v' => 1 }, { 'id' => 'b', 'v' => 2 }]
     expect(described_class.run('INDEX(.id)', rows).to_a).to eq([{ 'a' => rows[0], 'b' => rows[1] }])
