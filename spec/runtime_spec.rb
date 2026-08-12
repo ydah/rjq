@@ -514,22 +514,20 @@ RSpec.describe Rjq do
     ).to_a.fetch(0)
     expect(scaling[0..2]).to eq([6, 1.5, 6])
     expect(scaling[3]).to be_nan
-    expect(scaling[4..]).to eq([Float::INFINITY, 0, 2, Float::INFINITY, 0])
+    expect(scaling[4..]).to eq([Float::MAX, 0, 2, Float::MAX, 0])
   end
 
-  it 'fails explicitly when exact native math operations are unavailable' do
+  it 'fails explicitly when exact native fma and remainder are unavailable' do
     allow(Rjq::MathFunctions).to receive(:native_library).and_call_original
     allow(Rjq::MathFunctions).to receive(:native_library).with(:fma).and_return(nil)
     expect { described_class.run('fma(2;3;4)', nil).to_a }
       .to raise_error(Rjq::RuntimeError, /native fused multiply-add is not available/)
 
     allow(Rjq::MathFunctions).to receive(:native_library).with(:scalb).and_return(nil)
-    expect { described_class.run('scalb(2;3)', nil).to_a }
-      .to raise_error(Rjq::RuntimeError, /native scalb is not available/)
+    expect(described_class.run('scalb(2;3)', nil).to_a).to eq([16])
 
     allow(Rjq::MathFunctions).to receive(:native_library).with(:scalbln).and_return(nil)
-    expect { described_class.run('scalbln(2;3)', nil).to_a }
-      .to raise_error(Rjq::RuntimeError, /native scalbln is not available/)
+    expect(described_class.run('scalbln(2;3)', nil).to_a).to eq([16])
 
     allow(Rjq::MathFunctions).to receive(:native_library).with(:remainder).and_return(nil)
     matrix = '[(1e308,-1e308,infinite,nan,0,-0) as $x | ' \

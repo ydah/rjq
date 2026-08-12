@@ -65,6 +65,8 @@ jobs:
           curl -fsSL https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64 -o "$RUNNER_TEMP/jq-1.7.1"
           echo "5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5  $RUNNER_TEMP/jq-1.7.1" | sha256sum -c -
           chmod +x "$RUNNER_TEMP/jq-1.7.1"
+          test -x "$RUNNER_TEMP/jq-1.7.1"
+          test "$("$RUNNER_TEMP/jq-1.7.1" --version)" = "jq-1.7.1"
       - run: bundle exec rake differential
         env:
           JQ_BIN: ${{ runner.temp }}/jq-1.7.1
@@ -116,6 +118,7 @@ jobs:
     container: ruby:3.4-alpine
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: apk add --no-cache build-base libffi-dev
       - run: bundle install
       - run: bundle exec rake
 

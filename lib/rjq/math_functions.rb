@@ -42,18 +42,16 @@ module Rjq
     end
 
     def scalb(value, exponent)
-      library = native_library(:scalb)
-      return library.scalb(value.to_f, exponent.to_f) if library
+      exponent = exponent.to_f
+      return Float::NAN if exponent.nan?
+      return portable_scale(value.to_f, exponent.positive? ? 10_000 : -10_000) if exponent.infinite?
 
-      raise Rjq::RuntimeError, 'native scalb is not available on this platform'
+      portable_scale(value.to_f, exponent.to_i)
     end
 
     def scalbln(value, exponent)
       integral_exponent = c_long_exponent(exponent.to_f)
-      library = native_library(:scalbln)
-      return library.scalbln(value.to_f, integral_exponent) if library
-
-      raise Rjq::RuntimeError, 'native scalbln is not available on this platform'
+      portable_scale(value.to_f, integral_exponent)
     end
 
     def native_available?(name)
@@ -89,6 +87,23 @@ module Rjq
       return value.positive? ? maximum : minimum if value.infinite?
 
       [[value.to_i, minimum].max, maximum].min
+    end
+
+    def portable_scale(value, exponent)
+      return value if value.zero?
+      return signed_max(value) if value.infinite?
+
+      _, value_exponent = Math.frexp(value.abs)
+      target_exponent = value_exponent + exponent
+      return signed_max(value) if target_exponent > 1024
+      return value.negative? ? -0.0 : 0.0 if target_exponent < -1074
+
+      result = Math.ldexp(value, exponent)
+      result.infinite? ? signed_max(value) : result
+    end
+
+    def signed_max(value)
+      value.negative? ? -Float::MAX : Float::MAX
     end
 
     def bessel_library

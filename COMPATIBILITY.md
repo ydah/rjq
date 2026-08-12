@@ -19,14 +19,14 @@ The fixture source tag, upstream commit, adaptation marker, and file checksums a
 | Filter locations | `$__loc__` and disassembly use filter-source positions, including module and interpolation sources. `-f` filenames are reported as canonical absolute paths. Input filenames and line numbers remain separate. |
 | Regex | Ruby's regular-expression engine is used. jq's `m`, `s`, and `p` mode mapping is preserved; advanced Oniguruma behavior can differ. Ruby API callers may set `regexp_timeout` on runtimes that support per-expression timeouts. |
 | Date/time | UTC conversion is host-timezone independent; platform date ranges can still differ. |
-| Math | jq 1.7.1 builtin names and arities are declared. Bessel, fused multiply-add, IEEE remainder, and scaling functions use the platform C math library through `fiddle` when available. |
+| Math | jq 1.7.1 builtin names and arities are declared. Bessel, fused multiply-add, and IEEE remainder use the platform C math library through `fiddle` when available; scaling uses a portable implementation. |
 
 ## Known differences
 
 - This is not libjq and does not claim complete source, diagnostic-text, regex-engine, module-layout, or performance compatibility.
 - Regex flag `l`, Unicode offsets, and advanced engine constructs can differ because Ruby Regexp is not jq's bundled Oniguruma build. In particular, zero-width matches on multibyte UTF-8 strings advance by codepoint in rjq and by byte in jq, so `split/2` can contain a different number of empty fields.
 - Ruby Regexp rejects some variable-length lookbehind expressions that jq's Oniguruma accepts. These remain controlled regular-expression errors rather than loading a second native regex engine.
-- On platforms without native `fma`, `remainder`, `scalb`, or `scalbln` symbols, the corresponding builtin raises a controlled runtime error instead of silently returning a non-fused or otherwise incompatible approximation.
+- `fma` and IEEE remainder require their exact native symbols and raise controlled runtime errors when unavailable. `scalb` and `scalbln` use a portable `ldexp`-based implementation with jq-compatible truncation, saturation, signed zero, and non-finite handling.
 - rjq extensions include `@base32`, `@base32d`, `dateadd`, `datesub`, `ascii`, `to_number`, and compatibility aliases such as `leaf_paths`. They remain callable but are excluded from jq's `builtins` result; embedders can inspect `Rjq::Builtins::EXTENSION_ARITIES`.
 - `get_jq_origin` reports the rjq installation root. Default module search paths are rjq's actual expanded paths, not jq's symbolic `$ORIGIN` entries.
 - JSON object keys supplied through the Ruby API must be strings. Cyclic Ruby arrays and hashes are rejected.
