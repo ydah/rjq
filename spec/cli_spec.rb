@@ -65,9 +65,65 @@ RSpec.describe Rjq::CLI do
     code = described_class.new(['-n', '--raw-output0', '"a\u0000b"'], stdin: StringIO.new, stdout: out,
                                                                           stderr: err).run
 
-    expect(code).to eq(4)
+    expect(code).to eq(5)
     expect(out.string).to eq('')
     expect(err.string).to include('Cannot dump a string containing NUL with --raw-output0 option')
+  end
+
+  it 'uses jq-compatible statuses for runtime and input parse errors' do
+    out = StringIO.new
+    err = StringIO.new
+    code = described_class.new(['-n', '1, error("x")'], stdin: StringIO.new, stdout: out, stderr: err).run
+
+    expect(code).to eq(5)
+    expect(out.string).to eq("1\n")
+    expect(err.string).to include('runtime error: x')
+
+    err = StringIO.new
+    code = described_class.new(['.'], stdin: StringIO.new('{'), stdout: StringIO.new, stderr: err).run
+    expect(code).to eq(5)
+    expect(err.string).to include('JSON parse error')
+  end
+
+  it 'uses halt statuses and does not let try catch halt' do
+    code = described_class.new(['-n', 'try halt catch "caught"'], stdin: StringIO.new, stdout: StringIO.new,
+                                                               stderr: StringIO.new).run
+    expect(code).to eq(0)
+
+    code = described_class.new(['-n', 'try halt_error(7) catch "caught"'], stdin: StringIO.new,
+                                                                        stdout: StringIO.new,
+                                                                        stderr: StringIO.new).run
+    expect(code).to eq(7)
+  end
+
+  it 'treats invalid --argjson as an option error' do
+    err = StringIO.new
+    code = described_class.new(['-n', '--argjson', 'x', '{', '$x'], stdin: StringIO.new, stdout: StringIO.new,
+                                                                    stderr: err).run
+
+    expect(code).to eq(2)
+    expect(err.string).to include('invalid JSON text passed to --argjson')
+  end
+
+  it 'finds the filter after -- and keeps -f positionals as input files' do
+    Dir.mktmpdir do |dir|
+      input_path = File.join(dir, 'input.json')
+      filter_path = File.join(dir, 'filter.jq')
+      File.write(input_path, '{"foo":1}')
+      File.write(filter_path, '.foo')
+
+      out = StringIO.new
+      code = described_class.new(['-c', '--', '.foo', input_path], stdin: StringIO.new, stdout: out,
+                                                                    stderr: StringIO.new).run
+      expect(code).to eq(0)
+      expect(out.string).to eq("1\n")
+
+      out = StringIO.new
+      code = described_class.new(['-c', '-f', filter_path, input_path], stdin: StringIO.new, stdout: out,
+                                                                         stderr: StringIO.new).run
+      expect(code).to eq(0)
+      expect(out.string).to eq("1\n")
+    end
   end
 
   it 'supports join-output without separators' do
@@ -122,7 +178,7 @@ RSpec.describe Rjq::CLI do
     err = StringIO.new
     code = described_class.new(['-c', '--stream', '.'], stdin: StringIO.new('{"a":'), stdout: out, stderr: err).run
 
-    expect(code).to eq(2)
+    expect(code).to eq(5)
     expect(out.string).to eq('')
     expect(err.string).to include('rjq: JSON parse error: Unfinished JSON term at EOF at line 1, column 5')
   end

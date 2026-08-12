@@ -103,13 +103,13 @@ module Rjq
       2
     rescue JSONParseError => e
       @stderr.puts("rjq: JSON parse error: #{e.message}")
-      2
+      5
     rescue ParseError, CompileError => e
       @stderr.puts("rjq: compile error: #{e.message}")
       3
     rescue Rjq::RuntimeError => e
       @stderr.puts("rjq: runtime error: #{e.message}")
-      4
+      5
     rescue Errno::ENOENT, Errno::EACCES => e
       @stderr.puts("rjq: #{e.message}")
       2
@@ -122,6 +122,9 @@ module Rjq
         arg = @argv.shift
         case arg
         when '--'
+          if @filter.nil? && !@opts[:filter_file] && !@argv.empty?
+            @filter = @argv.shift
+          end
           @files.concat(@argv)
           @argv.clear
         when /\A--/
@@ -129,7 +132,7 @@ module Rjq
         when /\A-[^-]/
           parse_short(arg)
         else
-          if @filter.nil?
+          if @filter.nil? && !@opts[:filter_file]
             @filter = arg
           else
             @files << arg
@@ -139,6 +142,7 @@ module Rjq
 
       return unless @opts[:filter_file]
 
+      @files.unshift(@filter) if @filter
       @filter = File.read(@opts.delete(:filter_file))
     end
 
@@ -227,6 +231,8 @@ module Rjq
       parsed = JSON::Parser.parse_one(value)
       @opts[:variables][name] = parsed
       @opts[:variables]['ARGS.named'][name] = parsed
+    rescue JSONParseError => e
+      raise OptionError, "rjq: invalid JSON text passed to --argjson: #{e.message}"
     end
 
     def bind_json_array(name, path)
@@ -244,6 +250,8 @@ module Rjq
       values = @argv.map { |arg| json ? JSON::Parser.parse_one(arg) : arg }
       @opts[:variables]['ARGS.positional'] = values
       @argv.clear
+    rescue JSONParseError => e
+      raise OptionError, "rjq: invalid JSON text passed to --jsonargs: #{e.message}"
     end
 
     def next_arg(option, message = "#{option} takes one parameter")

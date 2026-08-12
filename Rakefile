@@ -12,4 +12,8 @@ task :compat_probe do
   ruby 'script/compat_probe.rb'
 end
 
+RSpec::Core::RakeTask.new(:differential) do |task|
+  task.pattern = 'spec/differential/**/*_spec.rb'
+end
+
 task default: %i[spec compat_probe]

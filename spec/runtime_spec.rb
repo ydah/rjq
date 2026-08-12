@@ -25,6 +25,63 @@ RSpec.describe Rjq do
       .to eq(['Out of bounds negative array index'])
   end
 
+  it 'preserves partial output and then propagates top-level error' do
+    output = described_class.run('1, error("x")', nil)
+
+    expect { output.to_a }.to raise_error(Rjq::ErrorValue, 'x')
+    yielded = []
+    expect { output.each { |value| yielded << value } }.to raise_error(Rjq::ErrorValue, 'x')
+    expect(yielded).to eq([1])
+  end
+
+  it 'does not let try or optional catch halt signals' do
+    expect { described_class.run('try halt catch "caught"', nil).to_a }
+      .to raise_error(Rjq::HaltError) { |error| expect(error.status).to eq(0) }
+    expect { described_class.run('halt_error(7)?', nil).to_a }
+      .to raise_error(Rjq::HaltError) { |error| expect(error.status).to eq(7) }
+  end
+
+  it 'accepts comments and keyword field names while rejecting a trailing dot' do
+    expect(described_class.run('. # comment', 1).to_a).to eq([1])
+    expect(described_class.run('.null, .true, .module',
+                               { 'null' => 1, 'true' => 2, 'module' => 3 }).to_a).to eq([1, 2, 3])
+    expect { described_class.compile('.foo.') }.to raise_error(Rjq::ParseError)
+  end
+
+  it 'does not rewrite module keywords or namespace syntax in strings and comments' do
+    expect(described_class.run('"module", "import", "$foo::bar"', nil).to_a)
+      .to eq(['module', 'import', '$foo::bar'])
+    expect(described_class.run("# include \"a\";\n.", 1).to_a).to eq([1])
+  end
+
+  it 'rejects malformed module directives instead of treating them as identity' do
+    expect { described_class.compile('include 1; .') }
+      .to raise_error(Rjq::CompileError, /requires a string module name/)
+    expect { described_class.compile('include "a"') }
+      .to raise_error(Rjq::CompileError, /terminated by semicolon/)
+  end
+
+  it 'treats interpolated quoted fields as dynamic indices' do
+    expect(described_class.run('."a\(1, 2)"', { 'a1' => 1, 'a2' => 2 }).to_a).to eq([1, 2])
+  end
+
+  it 'rejects unknown functions and invalid builtin arities during compilation' do
+    expect { described_class.compile('does_not_exist') }
+      .to raise_error(Rjq::CompileError, 'does_not_exist/0 is not defined')
+    expect { described_class.compile('length(1)') }
+      .to raise_error(Rjq::CompileError, 'length/1 is not defined')
+    expect { described_class.compile('pow(2)') }
+      .to raise_error(Rjq::CompileError, 'pow/1 is not defined')
+  end
+
+  it 'reports builtin names with their declared arities' do
+    names = described_class.run('builtins', nil).to_a.fetch(0)
+
+    expect(names).to include('halt/0', 'input/0', 'pow/2', 'fma/3', 'JOIN/4', 'error/0', 'halt_error/0',
+                             'first/1', 'last/1', 'bsearch/1')
+    expect(names).not_to include('halt/1', 'pow/1')
+  end
+
   it 'does not read stdin for null input unless input builtins are used' do
     io = Class.new do
       def read

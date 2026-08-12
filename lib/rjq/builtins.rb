@@ -6,23 +6,41 @@ require 'uri'
 
 module Rjq
   module Builtins
-    BUILTIN_NAMES = %w[
-      empty length utf8bytelength type keys keys_unsorted values arrays objects iterables scalars booleans
-      nulls numbers strings has in IN INDEX not error halt halt_error
-      input inputs debug stderr input_filename input_line_number null true false infinite nan isinfinite isnan isnormal
-      add any all flatten range floor ceil round sqrt log log2 log10 exp exp2 exp10 pow pow10 atan2 atan abs
-      cos sin tan acos asin cosh sinh tanh acosh asinh atanh cbrt significand logb gamma tgamma lgamma
-      lgamma_r frexp modf fabs fma drem ldexp scalb scalbln nearbyint trunc rint j0 j1 y0 y1
-      to_entries from_entries with_entries select map map_values to_number tonumber tostring tojson fromjson
-      ascii explode implode split join ltrimstr rtrimstr ascii_downcase ascii_upcase startswith endswith
-      index rindex indices
-      recurse recurse_down path paths leaf_paths getpath setpath delpaths del pick walk tostream fromstream truncate_stream
-      min max min_by max_by sort sort_by group_by GROUP_BY unique unique_by UNIQUE_BY reverse contains inside
-      combinations transpose first last nth limit until while repeat env now gmtime localtime mktime strftime
-      strflocaltime strptime fromdate todate fromdateiso8601 todateiso8601 date dateadd datesub test match capture scan
-      splits sub gsub @text @json @html @uri @csv @tsv @sh @base64 @base64d @base32 @base32d
-      isempty builtins JOIN modulemeta
+    ZERO_ARITY_BUILTINS = %w[
+      empty length utf8bytelength type keys keys_unsorted values arrays objects iterables scalars booleans nulls
+      numbers strings not error halt halt_error input inputs debug stderr input_filename input_line_number null true
+      false infinite nan isinfinite isnan isnormal add any all flatten floor ceil round sqrt log log2 log10 exp exp2 exp10
+      pow10 atan abs cos sin tan acos asin cosh sinh tanh acosh asinh atanh cbrt significand logb gamma tgamma
+      lgamma lgamma_r frexp modf fabs nearbyint trunc rint j0 j1 y0 y1 to_entries from_entries to_number tonumber
+      tostring tojson fromjson ascii explode implode ascii_downcase ascii_upcase recurse recurse_down paths leaf_paths
+      tostream min max sort unique reverse combinations transpose first last env now gmtime localtime mktime fromdate
+      todate fromdateiso8601 todateiso8601 date builtins modulemeta
     ].freeze
+    ONE_ARITY_BUILTINS = %w[
+      has in IN INDEX error halt_error debug flatten range any all with_entries select map map_values split join
+      ltrimstr rtrimstr startswith endswith index rindex indices recurse recurse_down path paths leaf_paths getpath
+      delpaths del pick walk fromstream truncate_stream min_by max_by sort_by group_by GROUP_BY unique_by UNIQUE_BY
+      contains inside combinations bsearch first last nth repeat isempty strftime strflocaltime strptime dateadd datesub
+      test match capture scan splits
+    ].freeze
+    TWO_ARITY_BUILTINS = %w[
+      IN INDEX JOIN any all range recurse recurse_down pow atan2 ldexp scalb scalbln drem setpath nth limit until while split test match
+      scan splits sub gsub
+    ].freeze
+    THREE_ARITY_BUILTINS = %w[JOIN range fma sub gsub].freeze
+    FOUR_ARITY_BUILTINS = %w[JOIN].freeze
+
+    BUILTIN_ARITIES = [
+      [0, ZERO_ARITY_BUILTINS],
+      [1, ONE_ARITY_BUILTINS],
+      [2, TWO_ARITY_BUILTINS],
+      [3, THREE_ARITY_BUILTINS],
+      [4, FOUR_ARITY_BUILTINS]
+    ].each_with_object({}) do |(arity, names), registry|
+      names.each { |name| (registry[name] ||= []) << arity }
+    end.transform_values(&:freeze).freeze
+    BUILTIN_NAMES = BUILTIN_ARITIES.keys.freeze
+    FORMAT_NAMES = %w[@text @json @html @uri @csv @tsv @sh @base64 @base64d @base32 @base32d].freeze
     REGISTRY = BUILTIN_NAMES.to_h { |name| [name, true] }.freeze
 
     module_function
@@ -83,6 +101,10 @@ module Rjq
         input_builtin(context)
       when 'inputs'
         inputs_builtin(context)
+      when 'input_filename'
+        [context.options.fetch(:current_filename, '<stdin>') || '<stdin>']
+      when 'input_line_number'
+        [context.options.fetch(:current_line, 1)]
       when 'debug', 'stderr'
         emit_diagnostic(name, input, context)
       when 'null'
@@ -1318,21 +1340,11 @@ module Rjq
     end
 
     def builtin_arities(name)
-      arities =
-        case name
-        when 'empty', 'length', 'utf8bytelength', 'type', 'keys', 'keys_unsorted', 'values',
-             'arrays', 'objects', 'iterables', 'scalars', 'booleans', 'nulls', 'numbers',
-             'strings', 'not', 'add', 'abs', 'sort', 'unique', 'reverse', 'first', 'last',
-             'env', 'now', 'gmtime', 'localtime', 'mktime', 'builtins', 'modulemeta'
-          [0]
-        when 'range'
-          [1, 2, 3]
-        when 'any', 'all'
-          [0, 1, 2]
-        else
-          [1]
-        end
-      arities.map { |arity| "#{name}/#{arity}" }
+      BUILTIN_ARITIES.fetch(name, []).map { |arity| "#{name}/#{arity}" }
+    end
+
+    def valid_arity?(name, arity)
+      BUILTIN_ARITIES.fetch(name, []).include?(arity)
     end
 
     def modulemeta(input, context)

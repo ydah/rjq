@@ -247,8 +247,10 @@ module Rjq
 
     def compile(filter_string)
       @module_metadata = fixture_module_metadata
-      ast = Parser.new(expand_modules(filter_string), allow_comments: @opts.fetch(:allow_comments, false)).parse
-      CompiledProgram.new(ast, program: BytecodeCompiler.new.compile(ast, module_metadata: @module_metadata))
+      ast = Parser.new(expand_modules(filter_string), allow_comments: @opts.fetch(:allow_comments, true)).parse
+      program = BytecodeCompiler.new.compile(ast, module_metadata: @module_metadata)
+      SemanticAnalyzer.new(program).validate!
+      CompiledProgram.new(ast, program: program)
     rescue ParseError
       raise
     rescue StandardError => e
@@ -261,28 +263,31 @@ module Rjq
       source = source.to_s
       validate_module_declarations(source)
       validate_module_directives(source)
-      expanded = strip_module_declarations(source).gsub(/\$(\w+)::/, '\1::')
+      expanded = rewrite_code(strip_module_declarations(source), /\$(\w+)::/, '\1::')
       replace_module_directives(expanded) do |entry|
         directive = entry.fetch(:directive)
         name = entry.fetch(:name)
         alias_name = entry[:alias]
         path = Modules.new(@opts.fetch(:library_path, [])).resolve(name)
+        alias_source = nil
         content =
           if path
             raise CompileError, "circular module import: #{name}" if seen.include?(path)
 
             raw_content = File.read(path)
+            alias_source = raw_content
             register_module_metadata(name, raw_content)
             expand_modules(raw_content, seen + [path])
           else
-            register_module_metadata(name, fixture_module(name))
-            fixture_module(name)
+            alias_source = fixture_module(name)
+            register_module_metadata(name, alias_source)
+            alias_source
           end
         if directive == 'import' && alias_name&.start_with?('$')
           variable = alias_name.delete_prefix('$')
           "#{content}\ndef #{variable}::#{variable}: #{fixture_data(name)};\n#{fixture_data(name)} as $#{variable} |"
         elsif directive == 'import' && alias_name
-          "#{content}\n#{module_aliases(content, alias_name)}"
+          "#{content}\n#{module_aliases(alias_source, alias_name)}"
         else
           content
         end
@@ -290,31 +295,27 @@ module Rjq
     end
 
     def validate_module_declarations(source)
-      offset = 0
-      while (match = source.match(/\bmodule\b/, offset))
-        cursor = skip_whitespace(source, match.end(0))
-        if source[cursor] == ':'
-          offset = match.end(0)
-          next
-        end
+      module_keyword_entries(source, ['module']).each do |entry|
+        cursor = skip_layout(source, entry.fetch(:keyword_finish))
         raise CompileError, 'Module metadata must be constant' if source[cursor] == '('
         raise CompileError, 'Module metadata must be an object' unless source[cursor] == '{'
 
-        offset = match.end(0)
+        _metadata, cursor = read_balanced(source, cursor)
+        cursor = skip_layout(source, cursor)
+        raise CompileError, 'module declaration must be terminated by semicolon' unless source[cursor] == ';'
       end
     end
 
     def validate_module_directives(source)
-      offset = 0
-      while (match = source.match(/\b(include|import)\b/, offset))
-        cursor = skip_whitespace(source, match.end(0))
-        if source[cursor] == '"'
-          _name, cursor = read_quoted_string(source, cursor)
-          cursor = skip_whitespace(source, cursor)
-          raise CompileError, 'Module metadata must be constant' if source[cursor] == '('
-          raise CompileError, 'Module metadata must be an object' if source[cursor] == '['
-        end
-        offset = match.end(0)
+      module_keyword_entries(source, %w[include import]).each do |entry|
+        cursor = skip_layout(source, entry.fetch(:keyword_finish))
+        raise CompileError, "#{entry.fetch(:keyword)} requires a string module name" unless source[cursor] == '"'
+
+        _name, cursor = read_quoted_string(source, cursor)
+        cursor = skip_layout(source, cursor)
+        raise CompileError, 'Module metadata must be constant' if source[cursor] == '('
+        raise CompileError, 'Module metadata must be an object' if source[cursor] == '['
+        read_module_directive(source, entry)
       end
     end
 
@@ -336,52 +337,29 @@ module Rjq
     end
 
     def module_declaration_ranges(source)
-      ranges = []
-      offset = 0
-      while (match = source.match(/\bmodule\b/, offset))
-        cursor = skip_whitespace(source, match.end(0))
-        unless source[cursor] == '{'
-          offset = match.end(0)
-          next
-        end
-
+      module_keyword_entries(source, ['module']).map do |entry|
+        cursor = skip_layout(source, entry.fetch(:keyword_finish))
         _object_source, cursor = read_balanced(source, cursor)
-        cursor = skip_whitespace(source, cursor)
-        unless source[cursor] == ';'
-          offset = cursor
-          next
-        end
-
-        ranges << (match.begin(0)...(cursor + 1))
-        offset = cursor + 1
+        cursor = skip_layout(source, cursor)
+        entry.fetch(:start)...(cursor + 1)
       end
-      ranges
     end
 
     def module_directives(source)
-      directives = []
-      offset = 0
-      while (match = source.match(/\b(include|import)\b/, offset))
-        entry = read_module_directive(source, match)
-        if entry
-          directives << entry
-          offset = entry.fetch(:finish)
-        else
-          offset = match.end(0)
-        end
-      end
-      directives
+      module_keyword_entries(source, %w[include import]).map { |entry| read_module_directive(source, entry) }
     end
 
-    def read_module_directive(source, match)
-      cursor = skip_whitespace(source, match.end(0))
-      return nil unless source[cursor] == '"'
+    def read_module_directive(source, keyword_entry)
+      cursor = skip_layout(source, keyword_entry.fetch(:keyword_finish))
+      unless source[cursor] == '"'
+        raise CompileError, "#{keyword_entry.fetch(:keyword)} requires a string module name"
+      end
 
       name, cursor = read_quoted_string(source, cursor)
       metadata_source = nil
       alias_name = nil
       loop do
-        cursor = skip_whitespace(source, cursor)
+        cursor = skip_layout(source, cursor)
         if metadata_source.nil? && source[cursor] == '{'
           metadata_source, cursor = read_balanced(source, cursor)
         elsif alias_name.nil? && source[cursor..]&.match?(/\Aas\b/)
@@ -390,13 +368,15 @@ module Rjq
           break
         end
       end
-      cursor = skip_whitespace(source, cursor)
-      return nil unless source[cursor] == ';'
+      cursor = skip_layout(source, cursor)
+      unless source[cursor] == ';'
+        raise CompileError, "#{keyword_entry.fetch(:keyword)} directive must be terminated by semicolon"
+      end
 
       {
-        start: match.begin(0),
+        start: keyword_entry.fetch(:start),
         finish: cursor + 1,
-        directive: match[1],
+        directive: keyword_entry.fetch(:keyword),
         name: name,
         metadata: metadata_source,
         alias: alias_name
@@ -404,7 +384,7 @@ module Rjq
     end
 
     def read_module_alias(source, cursor)
-      cursor = skip_whitespace(source, cursor)
+      cursor = skip_layout(source, cursor)
       match = source[cursor..].match(/\A\$?[A-Za-z_][A-Za-z0-9_]*/)
       raise CompileError, 'invalid module alias' unless match
 
@@ -420,6 +400,9 @@ module Rjq
         char = source[cursor]
         if char == '"'
           cursor = quoted_string_end(source, cursor)
+        elsif char == '#'
+          cursor += 1
+          cursor += 1 while cursor < source.length && source[cursor] != "\n"
         elsif pairs.key?(char)
           stack << pairs.fetch(char)
           cursor += 1
@@ -460,8 +443,84 @@ module Rjq
     end
 
     def skip_whitespace(source, cursor)
-      cursor += 1 while cursor < source.length && source[cursor].match?(/\s/)
+      skip_layout(source, cursor)
+    end
+
+    def skip_layout(source, cursor)
+      loop do
+        cursor += 1 while cursor < source.length && source[cursor].match?(/\s/)
+        break unless source[cursor] == '#'
+
+        cursor += 1 while cursor < source.length && source[cursor] != "\n"
+      end
       cursor
+    end
+
+    def module_keyword_entries(source, keywords)
+      regions = lexical_regions(source)
+      pattern = /\b(?:#{Regexp.union(keywords).source})\b/
+      source.to_enum(:scan, pattern).filter_map do
+        match = Regexp.last_match
+        next unless (match.begin(0)...match.end(0)).all? { |index| regions[index] == :code }
+        next unless directive_boundary?(source, regions, match.begin(0))
+
+        { start: match.begin(0), keyword_finish: match.end(0), keyword: match[0] }
+      end
+    end
+
+    def directive_boundary?(source, regions, start)
+      cursor = start - 1
+      while cursor >= 0
+        if regions[cursor] == :comment || source[cursor].match?(/\s/)
+          cursor -= 1
+          next
+        end
+        return source[cursor] == ';'
+      end
+      true
+    end
+
+    def rewrite_code(source, pattern, replacement)
+      regions = lexical_regions(source)
+      source.gsub(pattern) do |matched|
+        match = Regexp.last_match
+        if (match.begin(0)...match.end(0)).all? { |index| regions[index] == :code }
+          matched.sub(pattern, replacement)
+        else
+          matched
+        end
+      end
+    end
+
+    def lexical_regions(source)
+      regions = Array.new(source.length, :code)
+      state = :code
+      escaped = false
+      source.each_char.with_index do |char, index|
+        case state
+        when :string
+          regions[index] = :string
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == '"'
+            state = :code
+          end
+        when :comment
+          regions[index] = :comment
+          state = :code if char == "\n"
+        else
+          if char == '"'
+            regions[index] = :string
+            state = :string
+          elsif char == '#'
+            regions[index] = :comment
+            state = :comment
+          end
+        end
+      end
+      regions
     end
 
     def fixture_module(name)
@@ -539,11 +598,6 @@ module Rjq
 
     def definition_metadata(content)
       Parser.new(content).parse.definitions.map { |definition| "#{definition.name}/#{definition.params.length}" }
-    rescue ParseError
-      content.scan(/def\s+([A-Za-z_][A-Za-z0-9_:]*)(\s*\(([^)]*)\))?\s*:/).map do |name, _params_with_parens, params|
-        arity = params ? params.split(/[;,]/).reject(&:empty?).length : 0
-        "#{name}/#{arity}"
-      end
     end
 
     def fixture_module_metadata
@@ -564,11 +618,12 @@ module Rjq
     end
 
     def module_aliases(content, alias_name)
-      content.scan(/def\s+([A-Za-z_][A-Za-z0-9_]*)(\s*\(([^)]*)\))?\s*:/).map do |name, params_with_parens, params|
-        if params_with_parens
-          "def #{alias_name}::#{name}#{params_with_parens}: #{name}(#{params});"
+      Parser.new(content).parse.definitions.reject { |definition| definition.name.include?('::') }.map do |definition|
+        if definition.params.empty?
+          "def #{alias_name}::#{definition.name}: #{definition.name};"
         else
-          "def #{alias_name}::#{name}: #{name};"
+          params = definition.params.join('; ')
+          "def #{alias_name}::#{definition.name}(#{params}): #{definition.name}(#{params});"
         end
       end.join("\n")
     end

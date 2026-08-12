@@ -34,7 +34,7 @@ module Rjq
       '%' => 10
     }.freeze
 
-    def initialize(source, allow_comments: false)
+    def initialize(source, allow_comments: true)
       @tokens = source.is_a?(Array) ? source : Lexer.new(source, allow_comments: allow_comments).tokenize
       @index = 0
       @definitions = []
@@ -200,7 +200,7 @@ module Rjq
         case current.type
         when :dot
           consume
-          parse_dot_suffix(AST::Identity.new)
+          parse_dot_suffix(AST::Identity.new, required: false)
         when :operator
           parse_operator_prefix
         when :number
@@ -470,7 +470,7 @@ module Rjq
           case current.type
           when :dot
             consume
-            parse_dot_suffix(node)
+            parse_dot_suffix(node, required: true)
           when :lbracket
             parse_bracket_access(node)
           when :question
@@ -482,17 +482,28 @@ module Rjq
       end
     end
 
-    def parse_dot_suffix(base)
+    def parse_dot_suffix(base, required:)
       case current.type
       when :identifier
         AST::Field.new(base, consume.value)
-      when :string
+      when :keyword
+        return base unless token_adjacent_to_previous?
+
         AST::Field.new(base, consume.value)
+      when :string
+        value = consume.value
+        value.is_a?(Array) ? AST::Index.new(base, AST::StringLiteral.new(value)) : AST::Field.new(base, value)
       when :lbracket
         parse_bracket_access(base)
       else
+        raise error('expected field or bracket expression after dot') if required
+
         base
       end
+    end
+
+    def token_adjacent_to_previous?
+      previous.line == current.line && previous.column + previous.value.to_s.length == current.column
     end
 
     def parse_bracket_access(base)

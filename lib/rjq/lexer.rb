@@ -36,7 +36,7 @@ module Rjq
 
     attr_reader :tokens
 
-    def initialize(source, allow_comments: false)
+    def initialize(source, allow_comments: true)
       @source = source.to_s
       @allow_comments = allow_comments
       @index = 0

@@ -20,8 +20,8 @@ RSpec.describe Rjq::Lexer do
     expect(1.0 / value).to eq(-Float::INFINITY)
   end
 
-  it 'rejects comments unless enabled' do
-    expect { described_class.new('# nope').tokenize }.to raise_error(Rjq::ParseError)
-    expect(described_class.new("# ok\n.", allow_comments: true).tokenize.map(&:type)).to include(:dot)
+  it 'accepts comments by default and can disable them explicitly' do
+    expect(described_class.new("# ok\n.").tokenize.map(&:type)).to include(:dot)
+    expect { described_class.new('# nope', allow_comments: false).tokenize }.to raise_error(Rjq::ParseError)
   end
 end

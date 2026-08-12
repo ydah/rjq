@@ -53,7 +53,14 @@ module OfficialCompat
     inputs = Rjq::JSON::Parser.parse(input).to_a
     stderr = StringIO.new
     inputs.flat_map do |value|
-      Rjq.compile(program).run(value, stderr: stderr).to_a
+      output = []
+      begin
+        Rjq.compile(program).run(value, stderr: stderr).each { |item| output << item }
+      rescue Rjq::ErrorValue
+        # jq's legacy fixture runner compares values emitted before a terminal
+        # error. CLI status and diagnostics are covered by differential specs.
+      end
+      output
     end
   end
 

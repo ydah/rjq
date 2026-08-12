@@ -188,16 +188,19 @@ module Rjq
       def eval(input, context)
         return [@value] if @value.is_a?(String)
 
-        [@value.map { |kind, value| eval_segment(kind, value, input, context) }.join]
+        @value.reduce(['']) do |prefixes, (kind, value)|
+          suffixes = eval_segment(kind, value, input, context)
+          prefixes.flat_map { |prefix| suffixes.map { |suffix| prefix + suffix } }
+        end
       end
 
       private
 
       def eval_segment(kind, value, input, context)
-        return value if kind == :text
+        return [value] if kind == :text
 
         parser = Rjq::Parser.new(value)
-        parser.parse.eval(input, context).map { |item| Builtins.to_string(item) }.join
+        parser.parse.eval(input, context).map { |item| Builtins.to_string(item) }
       end
     end
 

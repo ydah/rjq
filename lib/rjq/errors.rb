@@ -30,10 +30,13 @@ module Rjq
     end
   end
 
-  class HaltError < RuntimeError
+  # Halting terminates the whole jq program. It is deliberately not a
+  # RuntimeError: try/catch and the optional operator only catch ordinary
+  # filter failures.
+  class HaltError < Error
     attr_reader :value, :status
 
-    def initialize(value = nil, status = 5)
+    def initialize(value = nil, status = 0)
       @value = value
       @status = status
       super(value.nil? ? 'halt_error' : value.to_s)

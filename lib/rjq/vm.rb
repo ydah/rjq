@@ -14,6 +14,7 @@ module Rjq
           each_block(@program.program.instructions, input_value, context).each { |value| yielder << value }
         rescue ErrorValue => e
           Array(e.outputs).each { |value| yielder << value }
+          raise
         end
       end
     end
@@ -97,7 +98,7 @@ module Rjq
       case instruction.op
       when :load_input then stack << [input]
       when :load_const then stack << [Value.deep_copy(@program.program.constants.fetch(instruction.arg1))]
-      when :string_interp then stack << [evaluate_string(instruction.arg1, input, context)]
+      when :string_interp then stack << evaluate_string(instruction.arg1, input, context)
       when :format then stack << evaluate_format(instruction.arg1, instruction.arg2, input, context)
       when :variable then stack << evaluate_variable(instruction.arg1, context)
       when :field then stack << stack.pop.flat_map { |value| [read_field(value, instruction.arg1)] }
@@ -149,7 +150,7 @@ module Rjq
       case instruction.op
       when :load_input then stack << value_stream(input)
       when :load_const then stack << value_stream(Value.deep_copy(@program.program.constants.fetch(instruction.arg1)))
-      when :string_interp then stack << value_stream(evaluate_string(instruction.arg1, input, context))
+      when :string_interp then stack << values_stream(evaluate_string(instruction.arg1, input, context))
       when :format then stack << values_stream(evaluate_format(instruction.arg1, instruction.arg2, input, context))
       when :variable then stack << values_stream(evaluate_variable(instruction.arg1, context))
       when :field then stack << map_stream(stack.pop) { |value| read_field(value, instruction.arg1) }
@@ -795,12 +796,16 @@ module Rjq
     end
 
     def evaluate_string(segments, input, context)
-      segments.map do |segment|
-        next segment.fetch(:value) if segment.fetch(:kind) == :text
-
-        ctx = context_with_definitions(context, segment.fetch(:definitions))
-        execute_filter(segment.fetch(:block), input, ctx).map { |item| Builtins.to_string(item) }.join
-      end.join
+      segments.reduce(['']) do |prefixes, segment|
+        suffixes =
+          if segment.fetch(:kind) == :text
+            [segment.fetch(:value)]
+          else
+            ctx = context_with_definitions(context, segment.fetch(:definitions))
+            execute_filter(segment.fetch(:block), input, ctx).map { |item| Builtins.to_string(item) }
+          end
+        prefixes.flat_map { |prefix| suffixes.map { |suffix| prefix + suffix } }
+      end
     end
 
     def evaluate_format(name, spec, input, context)
