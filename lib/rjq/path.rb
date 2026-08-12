@@ -178,7 +178,9 @@ module Rjq
 
       index = key.to_i
       index = array.length + index if index.negative?
-      index.negative? ? nil : array[index]
+      return nil if index.negative? || index >= array.length
+
+      array[index]
     end
     private_class_method :read_array
 

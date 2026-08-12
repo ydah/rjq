@@ -161,7 +161,7 @@ RSpec.describe Rjq::CLI do
       expect(json_code).to eq(0)
       expect(json_out.string).to eq("[1,2]\n")
       expect(raw_code).to eq(0)
-      expect(raw_out.string).to eq("1\n2\n\n")
+      expect(raw_out.string.gsub("\r\n", "\n")).to eq("1\n2\n\n")
     end
   end
 

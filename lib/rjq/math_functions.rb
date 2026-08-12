@@ -42,6 +42,14 @@ module Rjq
     end
 
     def scalb(value, exponent)
+      library = native_library(:scalb)
+      if library
+        result = library.scalb(value.to_f, exponent.to_f)
+        return signed_max(value.to_f) if result.infinite?
+
+        return result
+      end
+
       exponent = exponent.to_f
       return Float::NAN if exponent.nan?
       return portable_scale(value.to_f, exponent.positive? ? 10_000 : -10_000) if exponent.infinite?
@@ -51,6 +59,14 @@ module Rjq
 
     def scalbln(value, exponent)
       integral_exponent = c_long_exponent(exponent.to_f)
+      library = native_library(:scalbln)
+      if library
+        result = library.scalbln(value.to_f, integral_exponent)
+        return signed_max(value.to_f) if result.infinite?
+
+        return result
+      end
+
       portable_scale(value.to_f, integral_exponent)
     end
 
@@ -110,6 +126,13 @@ module Rjq
       @bessel_library ||= load_bessel_library
     end
 
+    def bessel_available?
+      bessel_library
+      true
+    rescue Rjq::RuntimeError
+      false
+    end
+
     def load_bessel_library
       errors = []
       CANDIDATE_LIBRARIES.each do |library|
@@ -118,7 +141,7 @@ module Rjq
         errors << "#{library}: #{e.message}"
       end
 
-      raise "C math library with Bessel functions is not available (#{errors.join('; ')})"
+      raise Rjq::RuntimeError, "C math library with Bessel functions is not available (#{errors.join('; ')})"
     end
 
     def build_bessel_library(library)

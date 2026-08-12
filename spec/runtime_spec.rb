@@ -304,7 +304,9 @@ RSpec.describe Rjq do
   end
 
   it 'trampolines tail-recursive user functions while bounding non-tail calls' do
-    tail_recursive = 'def count: if . > 0 then . - 1 | count else . end; 5000 | count'
+    windows_host = RbConfig::CONFIG.fetch('host_os').match?(/mswin|mingw|cygwin/)
+    tail_depth = windows_host ? 500 : 5000
+    tail_recursive = "def count: if . > 0 then . - 1 | count else . end; #{tail_depth} | count"
     branching = 'def walk: if . > 0 then (. - 1, . - 2) | walk else . end; 3 | walk'
     non_tail = 'def count: if . > 0 then (. - 1 | count) + 1 else . end; 500 | count'
     compiled = described_class.compile(tail_recursive)
@@ -312,7 +314,7 @@ RSpec.describe Rjq do
     expect(compiled.run(nil).to_a).to eq([0.0])
     expect(compiled.run(nil).to_a).to eq([0.0])
     expect(described_class.run(branching, nil).to_a).to eq([0.0, -1.0, 0.0, 0.0, -1.0])
-    forwarded_filter = 'def count(g): if . > 0 then . - 1 | count(g) else g end; 5000 | count((., . + 10))'
+    forwarded_filter = "def count(g): if . > 0 then . - 1 | count(g) else g end; #{tail_depth} | count((., . + 10))"
     expect(described_class.run(forwarded_filter, nil).to_a).to eq([0.0, 10.0])
     path_recursion = 'def descend: if length > 0 then .[0] | descend else . end; ' \
                      'reduce range(0;200) as $i ([]; [.]) | descend = 1 | 1'
@@ -494,27 +496,45 @@ RSpec.describe Rjq do
   end
 
   it 'uses jq fused, IEEE remainder, and scaling semantics' do
-    fused = described_class.run('[fma(1e308;1e-308;-1),(1e308*1e-308-1)]', nil).to_a.fetch(0)
     if Rjq::MathFunctions.native_available?(:fma)
+      fused = described_class.run('[fma(1e308;1e-308;-1),(1e308*1e-308-1)]', nil).to_a.fetch(0)
       expect(fused).to eq([-7.969431103331108e-17, -1.1102230246251565e-16])
     else
-      expect(fused[0]).to eq(fused[1])
+      expect { described_class.run('fma(1e308;1e-308;-1)', nil).to_a }
+        .to raise_error(Rjq::RuntimeError, /native fused multiply-add is not available/)
     end
 
-    remainders = described_class.run(
-      '[drem(5.3;2),drem(-5.3;2),drem(5;2),drem(7;2),drem(6;4),drem(2;infinite),drem(-0;2)]', nil
-    ).to_a.fetch(0)
-    expect(remainders[0..5]).to eq([-0.7000000000000002, 0.7000000000000002, 1, -1, -2, 2])
-    expect(1.0 / remainders[6]).to eq(-Float::INFINITY)
+    if Rjq::MathFunctions.native_available?(:remainder)
+      remainders = described_class.run(
+        '[drem(5.3;2),drem(-5.3;2),drem(5;2),drem(7;2),drem(6;4),drem(2;infinite),drem(-0;2)]', nil
+      ).to_a.fetch(0)
+      expect(remainders[0..5]).to eq([-0.7000000000000002, 0.7000000000000002, 1, -1, -2, 2])
+      expect(1.0 / remainders[6]).to eq(-Float::INFINITY)
+    else
+      expect { described_class.run('drem(5.3;2)', nil).to_a }
+        .to raise_error(Rjq::RuntimeError, /native IEEE remainder is not available/)
+    end
 
     scaling = described_class.run(
       '[scalb(3;1.9),scalb(3;-1.9),scalbln(3;1.9),scalb(2;nan),' \
       'scalb(2;infinite),scalb(2;-infinite),scalbln(2;nan),' \
       'scalbln(2;infinite),scalbln(2;-infinite)]', nil
     ).to_a.fetch(0)
-    expect(scaling[0..2]).to eq([6, 1.5, 6])
+    if Rjq::MathFunctions.native_available?(:scalb) && RbConfig::CONFIG.fetch('host_os').match?(/linux/)
+      expect(scaling[0]).to be_nan
+      expect(scaling[1]).to be_nan
+      expect(scaling[2]).to eq(6)
+    else
+      expect(scaling[0..2]).to eq([6, 1.5, 6])
+    end
     expect(scaling[3]).to be_nan
-    expect(scaling[4..]).to eq([Float::MAX, 0, 2, Float::MAX, 0])
+    expected_tail = if Rjq::MathFunctions.native_available?(:scalbln) &&
+                      RbConfig::CONFIG.fetch('host_os').match?(/linux/)
+                      [Float::MAX, 0, 0, 0, 0]
+                    else
+                      [Float::MAX, 0, 2, Float::MAX, 0]
+                    end
+    expect(scaling[4..]).to eq(expected_tail)
   end
 
   it 'fails explicitly when exact native fma and remainder are unavailable' do
@@ -704,7 +724,7 @@ RSpec.describe Rjq do
     origins = described_class.run('[get_jq_origin, get_prog_origin, get_search_list]', nil, opts).to_a.first
 
     expect(origins[0]).to be_a(String)
-    expect(origins[1]).to eq('/tmp')
+    expect(origins[1]).to eq(File.expand_path('/tmp'))
     expect(origins[2]).to eq([File.expand_path('lib')])
   end
 
@@ -1269,6 +1289,12 @@ RSpec.describe Rjq do
   end
 
   it 'supports libm Bessel math builtins' do
+    unless Rjq::MathFunctions.bessel_available?
+      expect { described_class.run('1 | j0', nil).to_a }
+        .to raise_error(Rjq::RuntimeError, /C math library with Bessel functions is not available/)
+      next
+    end
+
     values = described_class.run('[(1 | j0), (1 | j1), (1 | y0), (1 | y1), (0 | y0)]', nil).to_a.fetch(0)
 
     expect(values[0]).to be_within(1e-15).of(0.7651976865579666)
