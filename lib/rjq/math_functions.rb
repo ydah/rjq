@@ -38,7 +38,7 @@ module Rjq
       library = native_library(:remainder)
       return library.remainder(left.to_f, right.to_f) if library
 
-      portable_remainder(left.to_f, right.to_f)
+      raise Rjq::RuntimeError, 'native IEEE remainder is not available on this platform'
     end
 
     def scalb(value, exponent)
@@ -79,15 +79,6 @@ module Rjq
         dlload library
         extern signature
       end
-    end
-
-    def portable_remainder(left, right)
-      return Float::NAN if left.nan? || right.nan? || right.zero? || left.infinite?
-      return left if right.infinite?
-
-      quotient = (left / right).round(half: :even)
-      result = left - (right * quotient)
-      result.zero? && left.negative? ? -0.0 : result
     end
 
     def c_long_exponent(value)

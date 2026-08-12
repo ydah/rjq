@@ -271,7 +271,16 @@ RSpec.describe Rjq do
       .to raise_error(Rjq::RuntimeError, /native scalbln is not available/)
 
     allow(Rjq::MathFunctions).to receive(:native_library).with(:remainder).and_return(nil)
-    expect(described_class.run('drem(5.3;2)', nil).to_a).to eq([-0.7000000000000002])
+    matrix = '[(1e308,-1e308,infinite,nan,0,-0) as $x | ' \
+             '(1e-308,-1e-308,infinite,0) as $y | ' \
+             'try drem($x;$y) catch ., try remainder($x;$y) catch .]'
+    failures = described_class.run(matrix, nil).to_a.fetch(0)
+    expect(failures.length).to eq(48)
+    expect(failures.uniq).to eq(['native IEEE remainder is not available on this platform'])
+    expect { described_class.run('drem(5.3;2)', nil).to_a }
+      .to raise_error(Rjq::RuntimeError, /native IEEE remainder is not available/)
+    expect { described_class.run('remainder(5.3;2)', nil).to_a }
+      .to raise_error(Rjq::RuntimeError, /native IEEE remainder is not available/)
   end
 
   it 'keeps date conversion independent of the host timezone' do
