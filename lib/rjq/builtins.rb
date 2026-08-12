@@ -1168,18 +1168,28 @@ module Rjq
     def nth(input, context, args)
       Enumerator.new do |yielder|
         filter_stream(args.fetch(0), input, context).each do |raw_index|
-          index = numeric(raw_index).ceil
-          raise RuntimeError, "nth doesn't support negative indices" if index.negative?
-
-          if args.length > 1
-            values = args[1].take(input, context, index + 1)
-            yielder << values[index] if index < values.length
-          else
-            values = assert_array(input)
-            yielder << values[index] if index < values.length
+          if args.length == 1
+            yielder << nth_index_value(input, raw_index)
+            next
           end
+
+          numeric_index = numeric(raw_index)
+          raise RuntimeError, "nth doesn't support negative indices" if numeric_index < 0
+
+          index = numeric_index.ceil
+          values = args[1].take(input, context, index + 1)
+          yielder << values[index] if index < values.length
         end
       end
+    end
+
+    def nth_index_value(input, raw_index)
+      index = if raw_index.is_a?(Numeric) && (!raw_index.respond_to?(:finite?) || raw_index.finite?)
+                raw_index.to_i
+              else
+                raw_index
+              end
+      Path.read_index(input, index)
     end
 
     def limit(input, context, args)

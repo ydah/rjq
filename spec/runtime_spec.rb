@@ -43,6 +43,19 @@ RSpec.describe Rjq do
     expect(values).to eq([1])
   end
 
+  it 'distinguishes nth index access from nth filter selection' do
+    filter = '[0,1,2] | [nth(-0.1), nth(-1.1), nth(1.9), nth(3), nth(-4)]'
+    expect(described_class.run(filter, nil).to_a).to eq([[0, 2, 1, nil, nil]])
+    expect(described_class.run('[] | nth(0)', nil).to_a).to eq([nil])
+    expect(described_class.run('{"a":1} | nth("a")', nil).to_a).to eq([1])
+
+    values = []
+    output = described_class.run('nth((0, -0.1); (10, error("source boom")))', nil)
+    expect { output.each { |value| values << value } }
+      .to raise_error(Rjq::RuntimeError, "nth doesn't support negative indices")
+    expect(values).to eq([10])
+  end
+
   it 'traverses deeply nested values without Ruby recursion' do
     nested = 0
     10_000.times { nested = [nested] }
