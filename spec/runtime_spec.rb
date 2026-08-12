@@ -232,6 +232,28 @@ RSpec.describe Rjq do
     expect(yielded).to eq([0, 1])
   end
 
+  it 'validates public runtime and compiler options before compiling' do
+    expect { Rjq::Runtime.new('.', typo_option: true) }
+      .to raise_error(ArgumentError, /unknown runtime option: :typo_option/)
+    expect { described_class.run('.', nil, max_outputs: -1) }
+      .to raise_error(ArgumentError, /max_outputs must be an Integer at least 0/)
+    expect { described_class.run('.', nil, input_chunk_size: 0) }
+      .to raise_error(ArgumentError, /input_chunk_size must be an Integer at least 1/)
+    expect { described_class.run('.', nil, input_max_depth: 1.5) }
+      .to raise_error(ArgumentError, /input_max_depth must be an Integer/)
+    expect { described_class.run('.', nil, regexp_timeout: Float::NAN) }
+      .to raise_error(ArgumentError, /regexp_timeout must be a finite positive number or nil/)
+    expect { described_class.run('.', nil, variables: []) }
+      .to raise_error(ArgumentError, /variables must be a Hash/)
+
+    expect { Rjq::Compiler.new(compact: true) }
+      .to raise_error(ArgumentError, /unknown compiler option: :compact/)
+    expect { described_class.compile('.', allow_comments: nil) }
+      .to raise_error(ArgumentError, /allow_comments must be true or false/)
+    expect { described_class.compile('.', library_path: ['ok', 1]) }
+      .to raise_error(ArgumentError, /library_path must be an Array of Strings/)
+  end
+
   it 'does not let try or optional catch halt signals' do
     expect { described_class.run('try halt catch "caught"', nil).to_a }
       .to raise_error(Rjq::HaltError) { |error| expect(error.status).to eq(0) }
@@ -429,7 +451,7 @@ RSpec.describe Rjq do
     if Regexp.respond_to?(:timeout)
       expect(described_class.run('"a"|test("a")', nil, regexp_timeout: 0.1).to_a).to eq([true])
       expect { described_class.run('"a"|test("a")', nil, regexp_timeout: 0).to_a }
-        .to raise_error(Rjq::RuntimeError, /invalid timeout/)
+        .to raise_error(ArgumentError, /regexp_timeout/)
     end
     expect { described_class.run('[{}] | @csv', nil).to_a }
       .to raise_error(Rjq::TypeError, /not valid in a csv row/)

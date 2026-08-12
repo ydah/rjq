@@ -8,6 +8,89 @@ module Rjq
       sort_keys: false, tab: false, indent: 2, seq: false, stream: false,
       stream_errors: false, unbuffered: false, max_outputs: nil, variables: {}
     }.freeze
+    OPTION_KEYS = (DEFAULT_OPTIONS.keys + %i[
+      allow_comments color exit_status input_chunk_size input_max_depth library_path max_number_digits
+      max_string_bytes module_resolver regexp_timeout source_path stderr
+    ]).freeze
+    BOOLEAN_OPTIONS = %i[
+      allow_comments ascii compact exit_status join_output null_input raw_input raw_output raw_output0 seq slurp
+      sort_keys stream stream_errors tab unbuffered
+    ].freeze
+
+    class << self
+      def validate_options!(opts)
+        raise ArgumentError, 'options must be a Hash' unless opts.is_a?(Hash)
+
+        unknown = opts.keys - OPTION_KEYS
+        raise ArgumentError, "unknown runtime option: #{unknown.first.inspect}" unless unknown.empty?
+
+        BOOLEAN_OPTIONS.each { |key| validate_boolean!(opts, key) }
+        validate_color!(opts)
+        validate_integer!(opts, :indent, minimum: 0, maximum: 7)
+        validate_integer!(opts, :input_chunk_size, minimum: 1)
+        validate_integer!(opts, :input_max_depth, minimum: 0)
+        validate_integer!(opts, :max_number_digits, minimum: 0, optional: true)
+        validate_integer!(opts, :max_outputs, minimum: 0, optional: true)
+        validate_integer!(opts, :max_string_bytes, minimum: 0, optional: true)
+        validate_regexp_timeout!(opts)
+        validate_stderr!(opts)
+        validate_variables!(opts)
+        Compiler.validate_options!(Compiler.options_from(opts))
+        opts
+      end
+
+      private
+
+      def validate_boolean!(opts, key)
+        return unless opts.key?(key)
+        return if opts[key] == true || opts[key] == false
+
+        raise ArgumentError, "#{key} must be true or false"
+      end
+
+      def validate_color!(opts)
+        return unless opts.key?(:color)
+        return if opts[:color].nil? || opts[:color] == true || opts[:color] == false
+
+        raise ArgumentError, 'color must be true, false, or nil'
+      end
+
+      def validate_integer!(opts, key, minimum:, maximum: nil, optional: false)
+        return unless opts.key?(key)
+        return if optional && opts[key].nil?
+
+        value = opts[key]
+        valid = value.is_a?(Integer) && value >= minimum && (!maximum || value <= maximum)
+        return if valid
+
+        range = maximum ? "between #{minimum} and #{maximum}" : "at least #{minimum}"
+        raise ArgumentError, "#{key} must be an Integer #{range}"
+      end
+
+      def validate_regexp_timeout!(opts)
+        return unless opts.key?(:regexp_timeout)
+
+        timeout = opts[:regexp_timeout]
+        return if timeout.nil? || (timeout.is_a?(Numeric) && timeout.respond_to?(:finite?) && timeout.finite? &&
+          timeout.respond_to?(:positive?) && timeout.positive?)
+
+        raise ArgumentError, 'regexp_timeout must be a finite positive number or nil'
+      end
+
+      def validate_stderr!(opts)
+        return unless opts.key?(:stderr)
+        return if opts[:stderr].respond_to?(:puts)
+
+        raise ArgumentError, 'stderr must respond to puts'
+      end
+
+      def validate_variables!(opts)
+        return unless opts.key?(:variables)
+        return if opts[:variables].is_a?(Hash)
+
+        raise ArgumentError, 'variables must be a Hash'
+      end
+    end
 
     InputRecord = Struct.new(:value, :filename, :line, keyword_init: true)
 
@@ -88,8 +171,9 @@ module Rjq
 
     def initialize(filter_string, opts = {})
       @filter_string = filter_string || '.'
-      @opts = DEFAULT_OPTIONS.merge(opts)
-      @program = Rjq.compile(@filter_string, @opts)
+      self.class.validate_options!(opts)
+      @opts = DEFAULT_OPTIONS.merge(opts).freeze
+      @program = Rjq.compile(@filter_string, Compiler.options_from(@opts))
     end
 
     def run_values(values, input_queue: nil)

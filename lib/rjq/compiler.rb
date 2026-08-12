@@ -257,8 +257,57 @@ module Rjq
   end
 
   class Compiler
+    OPTION_KEYS = %i[allow_comments library_path module_resolver source_path].freeze
+
+    class << self
+      def options_from(opts)
+        opts.slice(*OPTION_KEYS)
+      end
+
+      def validate_options!(opts)
+        raise ArgumentError, 'options must be a Hash' unless opts.is_a?(Hash)
+
+        unknown = opts.keys - OPTION_KEYS
+        raise ArgumentError, "unknown compiler option: #{unknown.first.inspect}" unless unknown.empty?
+
+        validate_boolean!(opts, :allow_comments)
+        validate_optional_string!(opts, :source_path)
+        validate_library_path!(opts[:library_path]) if opts.key?(:library_path)
+        validate_module_resolver!(opts[:module_resolver]) if opts.key?(:module_resolver)
+        opts
+      end
+
+      private
+
+      def validate_boolean!(opts, key)
+        return unless opts.key?(key)
+        return if opts[key] == true || opts[key] == false
+
+        raise ArgumentError, "#{key} must be true or false"
+      end
+
+      def validate_optional_string!(opts, key)
+        return unless opts.key?(key)
+        return if opts[key].nil? || opts[key].is_a?(String)
+
+        raise ArgumentError, "#{key} must be a String or nil"
+      end
+
+      def validate_library_path!(paths)
+        return if paths.is_a?(Array) && paths.all? { |path| path.is_a?(String) }
+
+        raise ArgumentError, 'library_path must be an Array of Strings'
+      end
+
+      def validate_module_resolver!(resolver)
+        return if resolver.respond_to?(:resolve) && resolver.respond_to?(:initial_metadata)
+
+        raise ArgumentError, 'module_resolver must respond to resolve and initial_metadata'
+      end
+    end
+
     def initialize(opts = {})
-      @opts = opts
+      @opts = self.class.validate_options!(opts).dup.freeze
     end
 
     def compile(filter_string)

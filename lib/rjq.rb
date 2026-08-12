@@ -30,7 +30,8 @@ module Rjq
     end
 
     def run(filter_string, input_value, opts = {})
-      compile(filter_string, opts).run(input_value, opts)
+      Runtime.validate_options!(opts)
+      compile(filter_string, Compiler.options_from(opts)).run(input_value, opts)
     end
 
     def run_stream(filter_string, io:, opts: {}, &block)
