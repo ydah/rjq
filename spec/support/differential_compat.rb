@@ -124,6 +124,13 @@ module DifferentialCompat
     Case.new(name: 'format csv', filter: '["a",1,true,null] | format("csv")', input: '', flags: ['-n']),
     Case.new(name: 'regex m flag', filter: '"a\nb" | test("a.b"; "m")', input: '', flags: ['-n']),
     Case.new(name: 'regex s flag', filter: '"a\nb" | test("a.b"; "s")', input: '', flags: ['-n']),
+    Case.new(name: 'regex m s p flag mapping',
+             filter: '"a\\nb" as $s | [($s|test("^b$";"m")),($s|test("a.b";"m")),' \
+                     '($s|test("^b$";"s")),($s|test("a.b";"s")),' \
+                     '($s|test("^b$";"p")),($s|test("a.b";"p"))]', input: '', flags: ['-n']),
+    Case.new(name: 'regex single line anchor escaping',
+             filter: '[("a\\n"|test("^a$";"s")),("^a$"|test("\\\\^a\\\\$";"s")),' \
+                     '("$"|test("[$^]";"s"))]', input: '', flags: ['-n']),
     Case.new(name: 'regex split flags', filter: '"aBa" | split("b"; "i")', input: '', flags: ['-n']),
     Case.new(name: 'regex split captures', filter: '"a1b2" | split("([0-9])"; "")', input: '', flags: ['-n']),
     Case.new(name: 'regex split empty matches',

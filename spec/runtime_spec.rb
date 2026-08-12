@@ -244,8 +244,20 @@ RSpec.describe Rjq do
     expect(described_class.run('"Ab" | capture("(?<x>a)"; "i")', nil).to_a).to eq([{ 'x' => 'A' }])
     expect(described_class.run('[("a\nb"|test("a.b";"m")), ("a\nb"|test("a.b";"s"))]', nil).to_a)
       .to eq([[true, false]])
+    flags = '"a\\nb" as $s | [($s|test("^b$";"m")),($s|test("a.b";"m")),' \
+            '($s|test("^b$";"s")),($s|test("a.b";"s")),' \
+            '($s|test("^b$";"p")),($s|test("a.b";"p"))]'
+    expect(described_class.run(flags, nil).to_a).to eq([[false, true, false, false, false, true]])
+    anchors = '[("a\\n"|test("^a$";"s")),("^a$"|test("\\\\^a\\\\$";"s")),' \
+              '("$"|test("[$^]";"s"))]'
+    expect(described_class.run(anchors, nil).to_a).to eq([[true, true, true]])
     expect { described_class.run('"a" | test("a";"z")', nil).to_a }
       .to raise_error(Rjq::RuntimeError, /unsupported regular expression flag/)
+    if Regexp.respond_to?(:timeout)
+      expect(described_class.run('"a"|test("a")', nil, regexp_timeout: 0.1).to_a).to eq([true])
+      expect { described_class.run('"a"|test("a")', nil, regexp_timeout: 0).to_a }
+        .to raise_error(Rjq::RuntimeError, /invalid timeout/)
+    end
     expect { described_class.run('[{}] | @csv', nil).to_a }
       .to raise_error(Rjq::TypeError, /not valid in a csv row/)
   end

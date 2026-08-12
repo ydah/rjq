@@ -1339,13 +1339,51 @@ module Rjq
       unknown_flags = flags.each_char.uniq - %w[g i m n p s l x]
       raise RuntimeError, "unsupported regular expression flag: #{unknown_flags.first}" unless unknown_flags.empty?
 
+      pattern = single_line_anchors(pattern)
       options = 0
       options |= Regexp::IGNORECASE if flags.include?('i')
       options |= Regexp::MULTILINE if flags.include?('m') || flags.include?('p')
       options |= Regexp::EXTENDED if flags.include?('x')
-      [Regexp.new(pattern, options), flags]
-    rescue RegexpError => e
+      timeout = context.options[:regexp_timeout]
+      regex = if timeout.nil?
+                Regexp.new(pattern, options)
+              elsif Regexp.respond_to?(:timeout)
+                Regexp.new(pattern, options, timeout: timeout)
+              else
+                raise RuntimeError, 'regular expression timeout is not supported by this Ruby'
+              end
+      [regex, flags]
+    rescue RegexpError, ArgumentError => e
       raise RuntimeError, e.message.to_s
+    end
+
+    def single_line_anchors(pattern)
+      chars = pattern.each_char.to_a
+      output = +''
+      in_class = false
+      index = 0
+      while index < chars.length
+        char = chars[index]
+        if char == '\\'
+          output << char
+          index += 1
+          output << chars[index] if index < chars.length
+        elsif in_class
+          output << char
+          in_class = false if char == ']'
+        elsif char == '['
+          in_class = true
+          output << char
+        elsif char == '^'
+          output << '\\A'
+        elsif char == '$'
+          output << '\\Z'
+        else
+          output << char
+        end
+        index += 1
+      end
+      output
     end
 
     def format_builtin(input, context, args)
