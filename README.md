@@ -100,7 +100,7 @@ ruby script/official_compat.rb spec/fixtures/jq/onig.test
 # checked=40 failures=0
 ```
 
-The same fixtures are integrated into RSpec under `spec/compat`, so CI runs them as normal tests. Fixture success uses rjq's own value model and is not presented as proof of complete jq compatibility.
+The same fixtures are integrated into RSpec under `spec/compat`, so CI runs them as normal tests. Expected JSON uses Ruby's independent stdlib parser and comparator, and `%%FAIL` cases check diagnostic categories. The adapted fixtures remain a broad regression corpus rather than proof of complete jq compatibility.
 
 An independent differential suite invokes a checksum-pinned jq 1.7.1 executable and compares stdout bytes, normalized stderr, exit status, output count, and ordering:
 
@@ -170,17 +170,18 @@ ruby script/official_compat.rb spec/fixtures/jq/onig.test
 Run the benchmark suite:
 
 ```sh
-ruby benchmark/jq_compare.rb
+bundle exec ruby benchmark/jq_compare.rb
 ```
 
 If `jq` is available on `PATH`, the benchmark prints a Markdown comparison table and checks stdout equality. Increase the sample size with:
 
 ```sh
-ITERATIONS=50 ruby benchmark/jq_compare.rb
+ITERATIONS=50 bundle exec ruby benchmark/jq_compare.rb
 ```
 
-GitHub Actions runs the suite on Ruby 3.1 through 4.0 plus experimental Ruby head, runs a macOS portability job,
-executes the pinned jq 1.7.1 differential suite, and builds and installs the gem as a smoke test.
+GitHub Actions runs Ruby 3.1 through 4.0 plus experimental Ruby head, macOS, Windows, musl, minimum dependencies,
+coverage thresholds, the checksum-pinned jq 1.7.1 differential suite, and a built-gem install smoke test. A scheduled
+workflow records median and p95 process benchmarks and rejects output mismatches.
 
 ## Contributing
 

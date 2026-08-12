@@ -7,6 +7,7 @@ class FixtureModuleResolver
     'c' => 'def a: 0; def c: "acmehbah";',
     'shadow1' => 'def e: 2;',
     'shadow2' => 'def e: 3;',
+    'syntaxerror' => 'def invalid: ;',
     'test_bind_order' => 'def check: true;'
   }.freeze
   DATA = {

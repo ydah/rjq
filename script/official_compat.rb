@@ -11,24 +11,36 @@ limit = ENV['LIMIT']&.to_i
 checked = 0
 failures = []
 
-OfficialCompat.groups(path).each do |fail_group, lines|
+OfficialCompat.groups(path).each do |fail_group, lines, runtime_error|
   next if lines.empty?
 
-  program, input, *expected = lines
   checked += 1
   if fail_group
+    program, *expected = lines
     begin
       OfficialCompat.run_failure_case(program)
       failures << [program, nil, ['expected failure'], ['SUCCESS']]
-    rescue Rjq::Error
-      # expected
+    rescue Rjq::Error => e
+      expected_category = OfficialCompat.failure_category(expected)
+      unless OfficialCompat.compile_failure?(e) && OfficialCompat.error_category(e) == expected_category
+        failures << [program, nil, expected, ["WRONG ERROR #{e.class}: #{e.message}"]]
+      end
     end
-  elsif lines.length >= 3
+  else
+    program, input, *expected = lines
     begin
-      actual = OfficialCompat.run_case(program, input)
+      observation = OfficialCompat.observe_case(program, input)
       expected_values = OfficialCompat.expected_values(expected)
-      unless OfficialCompat.match_values?(expected_values, actual)
-        failures << [program, input, expected, OfficialCompat.dump_values(actual)]
+      runtime_error = OfficialCompat::RUNTIME_ERROR_EXPECTATIONS.fetch(program, runtime_error)
+      error_matches = if runtime_error
+                        observation.error.is_a?(Rjq::RuntimeError) && observation.error.message == runtime_error
+                      else
+                        observation.error.nil?
+                      end
+      unless error_matches && OfficialCompat.match_values?(expected_values, observation.outputs)
+        actual = OfficialCompat.dump_values(observation.outputs)
+        actual << "ERROR #{observation.error.class}: #{observation.error.message}" if observation.error
+        failures << [program, input, expected, actual]
       end
     rescue StandardError => e
       failures << [program, input, expected, ["ERROR #{e.class}: #{e.message}"]]

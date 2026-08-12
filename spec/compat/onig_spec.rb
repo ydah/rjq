@@ -9,9 +9,10 @@ RSpec.describe 'onig.test compatibility' do
   OfficialCompat.runnable_cases(path).each_with_index do |test_case, index|
     it "matches onig.test case #{index + 1}: #{test_case.fetch(:program)}" do
       expected = OfficialCompat.expected_values(test_case.fetch(:expected))
-      actual = OfficialCompat.run_case(test_case.fetch(:program), test_case.fetch(:input))
+      observation = OfficialCompat.observe_case(test_case.fetch(:program), test_case.fetch(:input))
 
-      expect(OfficialCompat.match_values?(expected, actual)).to be(true)
+      expect(OfficialCompat.match_values?(expected, observation.outputs)).to be(true)
+      expect(observation.error).to be_nil
     end
   end
 end

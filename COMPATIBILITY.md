@@ -2,10 +2,10 @@
 
 `rjq` targets a practical subset of jq 1.7.1. Compatibility is tested at two levels:
 
-- The bundled, adapted `jq.test` and `onig.test` fixtures exercise 447 and 40 cases. These tests use rjq's value model and are broad semantic regression tests, not proof of complete jq compatibility.
+- The bundled, adapted `jq.test` and `onig.test` fixtures exercise 447 and 40 cases. Expected JSON is decoded by Ruby's independent stdlib parser and compared without rjq's parser or value comparator. `%%FAIL` cases verify error categories instead of accepting any error.
 - The differential suite invokes an independently installed jq 1.7.1 executable and compares stdout bytes, normalized stderr, exit status, output count, and order. Run it with `JQ_BIN=/path/to/jq-1.7.1 bundle exec rake differential`.
 
-The fixture source tag and file checksums are recorded in `spec/fixtures/jq/manifest.json`.
+The fixture source tag, upstream commit, adaptation marker, and file checksums are recorded in `spec/fixtures/jq/manifest.json`.
 
 ## Compatibility areas
 
@@ -27,7 +27,7 @@ The fixture source tag and file checksums are recorded in `spec/fixtures/jq/mani
 - Regex flag `l`, Unicode offsets, and advanced engine constructs can differ because Ruby Regexp is not jq's bundled Oniguruma build. In particular, zero-width matches on multibyte UTF-8 strings advance by codepoint in rjq and by byte in jq, so `split/2` can contain a different number of empty fields.
 - Ruby Regexp rejects some variable-length lookbehind expressions that jq's Oniguruma accepts. These remain controlled regular-expression errors rather than loading a second native regex engine.
 - On platforms without native `fma`, `remainder`, `scalb`, or `scalbln` symbols, the corresponding builtin raises a controlled runtime error instead of silently returning a non-fused or otherwise incompatible approximation.
-- rjq extensions include `@base32`, `@base32d`, `dateadd`, `datesub`, `ascii`, `to_number`, and compatibility aliases such as `leaf_paths`.
+- rjq extensions include `@base32`, `@base32d`, `dateadd`, `datesub`, `ascii`, `to_number`, and compatibility aliases such as `leaf_paths`. They remain callable but are excluded from jq's `builtins` result; embedders can inspect `Rjq::Builtins::EXTENSION_ARITIES`.
 - `get_jq_origin` reports the rjq installation root. Default module search paths are rjq's actual expanded paths, not jq's symbolic `$ORIGIN` entries.
 - JSON object keys supplied through the Ruby API must be strings. Cyclic Ruby arrays and hashes are rejected.
 - `env`, `now`, local time, module loading, file arguments, and diagnostic builtins access process capabilities unless the caller avoids those features or injects controlled options.
