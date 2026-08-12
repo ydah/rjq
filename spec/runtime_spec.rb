@@ -275,6 +275,14 @@ RSpec.describe Rjq do
     anchors = '[("a\\n"|test("^a$";"s")),("^a$"|test("\\\\^a\\\\$";"s")),' \
               '("$"|test("[$^]";"s"))]'
     expect(described_class.run(anchors, nil).to_a).to eq([[true, true, true]])
+    classes = '[("]"|test("[]^]";"s")),("^"|test("[]^]";"s")),' \
+              '("A^"|test("[[:alpha:]^]+$";"s"))]'
+    expect(described_class.run(classes, nil).to_a).to eq([[true, true, true]])
+    inline = '"a\\nb" as $s | [($s|test("(?m:a.b)")),($s|test("(?m:^b$)")),' \
+             '($s|test("(?s:a.b)")),($s|test("(?-s:a.b)")),' \
+             '($s|test("(?-s:a.b)";"m")),($s|test("(?m:^b$)";"s")),' \
+             '($s|test("(?-m:^b$)";"s"))]'
+    expect(described_class.run(inline, nil).to_a).to eq([[false, true, true, false, false, true, false]])
     expect { described_class.run('"a" | test("a";"z")', nil).to_a }
       .to raise_error(Rjq::RuntimeError, /unsupported regular expression flag/)
     if Regexp.respond_to?(:timeout)

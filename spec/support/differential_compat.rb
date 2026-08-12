@@ -141,6 +141,20 @@ module DifferentialCompat
     Case.new(name: 'regex single line anchor escaping',
              filter: '[("a\\n"|test("^a$";"s")),("^a$"|test("\\\\^a\\\\$";"s")),' \
                      '("$"|test("[$^]";"s"))]', input: '', flags: ['-n']),
+    Case.new(name: 'regex character class anchors',
+             filter: '[("]"|test("[]^]";"s")),("^"|test("[]^]";"s")),' \
+                     '("A^"|test("[[:alpha:]^]+$";"s"))]', input: '', flags: ['-n']),
+    Case.new(name: 'regex inline mode groups',
+             filter: '"a\\nb" as $s | [($s|test("(?m:a.b)")),($s|test("(?m:^b$)")),' \
+                     '($s|test("(?s:a.b)")),($s|test("(?-s:a.b)")),' \
+                     '($s|test("(?-s:a.b)";"m")),($s|test("(?m:^b$)";"s")),' \
+                     '($s|test("(?-m:^b$)";"s"))]', input: '', flags: ['-n']),
+    Case.new(name: 'variable length lookbehind engine difference',
+             filter: 'try ("aaab"|test("(?<=a+)b")) catch .', input: '', flags: ['-n'],
+             deviation: Deviation.new(
+               reason: 'Ruby Regexp rejects variable-length lookbehind accepted by jq Oniguruma',
+               rjq_stdout: "\"invalid pattern in look-behind: /(?<=a+)b/\"\n".b
+             )),
     Case.new(name: 'regex split flags', filter: '"aBa" | split("b"; "i")', input: '', flags: ['-n']),
     Case.new(name: 'regex split captures', filter: '"a1b2" | split("([0-9])"; "")', input: '', flags: ['-n']),
     Case.new(name: 'regex split empty matches',

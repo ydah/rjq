@@ -1341,7 +1341,8 @@ module Rjq
       unknown_flags = flags.each_char.uniq - %w[g i m n p s l x]
       raise RuntimeError, "unsupported regular expression flag: #{unknown_flags.first}" unless unknown_flags.empty?
 
-      pattern = single_line_anchors(pattern)
+      dot_matches_newline = flags.include?('m') || flags.include?('p')
+      pattern = jq_regexp_pattern(pattern, dot_matches_newline: dot_matches_newline)
       options = 0
       options |= Regexp::IGNORECASE if flags.include?('i')
       options |= Regexp::MULTILINE if flags.include?('m') || flags.include?('p')
@@ -1359,33 +1360,134 @@ module Rjq
       raise RuntimeError, e.message.to_s
     end
 
-    def single_line_anchors(pattern)
+    def jq_regexp_pattern(pattern, dot_matches_newline:)
       chars = pattern.each_char.to_a
+      transformed, = transform_regexp_segment(chars, 0, line_anchors: false,
+                                                        dot_matches_newline: dot_matches_newline)
+      transformed
+    end
+
+    def transform_regexp_segment(chars, index, line_anchors:, dot_matches_newline:, stop_at_group_end: false)
       output = +''
-      in_class = false
-      index = 0
       while index < chars.length
         char = chars[index]
         if char == '\\'
           output << char
           index += 1
           output << chars[index] if index < chars.length
-        elsif in_class
-          output << char
-          in_class = false if char == ']'
         elsif char == '['
-          in_class = true
-          output << char
+          character_class, index = consume_regexp_character_class(chars, index)
+          output << character_class
+          next
+        elsif char == '(' && (inline = scoped_regexp_options(chars, index))
+          enabled, disabled, body_index = inline
+          child_line_anchors = option_state(line_anchors, enabled, disabled, 'm')
+          child_dot_matches_newline = option_state(dot_matches_newline, enabled, disabled, 's')
+          body, next_index = transform_regexp_segment(
+            chars, body_index, line_anchors: child_line_anchors,
+                               dot_matches_newline: child_dot_matches_newline, stop_at_group_end: true
+          )
+          output << ruby_regexp_group(enabled, disabled, dot_matches_newline, child_dot_matches_newline, body)
+          index = next_index
+          next
+        elsif char == '('
+          body, next_index = transform_regexp_segment(
+            chars, index + 1, line_anchors: line_anchors,
+                              dot_matches_newline: dot_matches_newline, stop_at_group_end: true
+          )
+          output << "(#{body})"
+          index = next_index
+          next
+        elsif char == ')' && stop_at_group_end
+          return [output, index + 1]
         elsif char == '^'
-          output << '\\A'
+          output << (line_anchors ? '^' : '\\A')
         elsif char == '$'
-          output << '\\Z'
+          output << (line_anchors ? '$' : '\\Z')
         else
           output << char
         end
         index += 1
       end
-      output
+      [output, index]
+    end
+
+    def consume_regexp_character_class(chars, index)
+      output = +'['
+      index += 1
+      if chars[index] == '^'
+        output << '^'
+        index += 1
+      end
+      if chars[index] == ']'
+        output << '\\]'
+        index += 1
+      end
+      while index < chars.length
+        char = chars[index]
+        if char == '\\'
+          output << char
+          index += 1
+          output << chars[index] if index < chars.length
+        elsif char == '[' && %w[: . =].include?(chars[index + 1])
+          marker = chars[index + 1]
+          closing = "#{marker}]"
+          while index < chars.length
+            output << chars[index]
+            index += 1
+            next unless output.end_with?(closing)
+
+            break
+          end
+          next
+        elsif char == ']'
+          output << char
+          return [output, index + 1]
+        else
+          output << char
+        end
+        index += 1
+      end
+      [output, index]
+    end
+
+    def scoped_regexp_options(chars, index)
+      return unless chars[index, 2] == ['(', '?']
+
+      cursor = index + 2
+      enabled = +''
+      while cursor < chars.length && %w[i m s x].include?(chars[cursor])
+        enabled << chars[cursor]
+        cursor += 1
+      end
+      disabled = +''
+      if chars[cursor] == '-'
+        cursor += 1
+        while cursor < chars.length && %w[i m s x].include?(chars[cursor])
+          disabled << chars[cursor]
+          cursor += 1
+        end
+      end
+      return unless chars[cursor] == ':' && !(enabled.empty? && disabled.empty?)
+
+      [enabled, disabled, cursor + 1]
+    end
+
+    def option_state(current, enabled, disabled, option)
+      return true if enabled.include?(option)
+      return false if disabled.include?(option)
+
+      current
+    end
+
+    def ruby_regexp_group(enabled, disabled, parent_dotall, child_dotall, body)
+      ruby_enabled = enabled.each_char.select { |option| %w[i x].include?(option) }
+      ruby_disabled = disabled.each_char.select { |option| %w[i x].include?(option) }
+      ruby_enabled << 'm' if child_dotall && !parent_dotall
+      ruby_disabled << 'm' if parent_dotall && !child_dotall
+      options = ruby_enabled.join
+      options += "-#{ruby_disabled.join}" unless ruby_disabled.empty?
+      options.empty? ? "(?:#{body})" : "(?#{options}:#{body})"
     end
 
     def format_builtin(input, context, args)
