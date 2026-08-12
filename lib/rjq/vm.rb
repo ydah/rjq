@@ -666,16 +666,17 @@ module Rjq
     end
 
     def update_with_rhs(spec, input, context, rhs)
-      operations = paths_for_block(spec.fetch(:left).instructions, input, context).map do |path|
-        current = Path.get(input, path)
+      copy = Value.deep_copy(input)
+      paths_for_block(spec.fetch(:left).instructions, input, context).each do |path|
+        current = Path.get(copy, path)
         value = if spec.fetch(:op) == '//='
                   Value.truthy?(current) ? current : rhs
                 else
                   apply_binary(spec.fetch(:op).delete_suffix('='), current, rhs)
                 end
-        [path, value]
+        copy = Path.set(copy, path, value)
       end
-      operations.reduce(Value.deep_copy(input)) { |copy, (path, value)| Path.set(copy, path, value) }
+      copy
     end
 
     def assign(spec, input, context)
@@ -689,20 +690,20 @@ module Rjq
     end
 
     def update(spec, input, context)
-      operations = paths_for_block(spec.fetch(:left).instructions, input, context).map do |path|
-        current = Path.get(input, path)
+      copy = Value.deep_copy(input)
+      deletions = []
+      paths_for_block(spec.fetch(:left).instructions, input, context).each do |path|
+        current = Path.get(copy, path)
         value = update_value(spec.fetch(:op), spec.fetch(:right), current, input, context)
         return [] if value.equal?(AssignmentSentinel.no_output)
 
-        [path, value]
+        if value.equal?(AssignmentSentinel.delete)
+          deletions << path
+        else
+          copy = Path.set(copy, path, value)
+        end
       end
-      copy = Value.deep_copy(input)
-      operations.reject { |_path, value| value.equal?(AssignmentSentinel.delete) }.each do |path, value|
-        copy = Path.set(copy, path, value)
-      end
-      Builtins.ordered_delete_paths(operations.select do |_path, value|
-        value.equal?(AssignmentSentinel.delete)
-      end.map(&:first)).each do |path|
+      Builtins.ordered_delete_paths(deletions.uniq).each do |path|
         Path.delete(copy, path)
       end
       [copy]
@@ -710,7 +711,7 @@ module Rjq
 
     def update_value(op, right, current, input, context)
       if op == '|='
-        values = execute_filter(right, current, context)
+        values = take_block(right.instructions, current, context, 1)
         return AssignmentSentinel.delete if values.empty?
 
         return values.first

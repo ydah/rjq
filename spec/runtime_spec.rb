@@ -305,6 +305,30 @@ RSpec.describe Rjq do
     expect(values).to eq([{ 'a' => 11, 'b' => 12 }])
   end
 
+  it 'updates duplicate and nested paths progressively' do
+    expect(described_class.run('{a:1,b:2}|(.a,.b)|=(.+1,error("late"))', nil).to_a)
+      .to eq([{ 'a' => 2, 'b' => 3 }])
+    expect(described_class.run('{a:9}|[((.a,.a)+=2),((.a,.a)-=2),((.a,.a)*=2),' \
+                               '((.a,.a)/=2),((.a,.a)%=4)]', nil).to_a)
+      .to eq([[{ 'a' => 13 }, { 'a' => 5 }, { 'a' => 36 }, { 'a' => 2.25 }, { 'a' => 1 }]])
+    expect(described_class.run('{a:{b:1}}|(.a,.a.b)|=' \
+                               'if type=="object" then .b+=1 else .+10 end', nil).to_a)
+      .to eq([{ 'a' => { 'b' => 12 } }])
+    expect(described_class.run('{a:[0,1,2]}|(.a[0:2],.a[0:2])+=[9]', nil).to_a)
+      .to eq([{ 'a' => [0, 1, 9, 9, 2] }])
+    expect(described_class.run('[0,1,2]|(.[0],.[0])|=empty', nil).to_a).to eq([[1, 2]])
+    expect(described_class.run('{a:null}|(.a,.a)//=(10,20)', nil).to_a)
+      .to eq([{ 'a' => 10 }, { 'a' => 20 }])
+  end
+
+  it 'preserves input order while updating duplicate paths' do
+    io = StringIO.new('10 20 30')
+
+    expect(described_class.run_stream('{a:1}|(.a,.a)+=(input,input)', io: io,
+                                                                         opts: { null_input: true }).to_a)
+      .to eq([{ 'a' => 21 }, { 'a' => 41 }])
+  end
+
   it 'preserves generated regex replacements and validates base64 input' do
     expect(described_class.run('"a" | sub("a"; ["x","y"][])', nil).to_a).to eq(%w[x y])
     expect(described_class.run('"ab" | gsub("(?<x>.)"; [.x|ascii_upcase,ascii_downcase][])', nil).to_a)
