@@ -940,13 +940,7 @@ module Rjq
       end
 
       def recursive_merge(left, right)
-        left.merge(right) do |_key, left_value, right_value|
-          if left_value.is_a?(Hash) && right_value.is_a?(Hash)
-            recursive_merge(left_value, right_value)
-          else
-            right_value
-          end
-        end
+        Value.merge_objects(left, right)
       end
 
       def division_by_zero_message(left, right, verb)

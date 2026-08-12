@@ -106,25 +106,51 @@ module Rjq
     end
 
     def compare(left, right)
-      left_type = type_of(left)
-      right_type = type_of(right)
-      type_cmp = TYPE_ORDER.fetch(left_type) <=> TYPE_ORDER.fetch(right_type)
-      return type_cmp unless type_cmp.zero?
+      stack = [[:compare, left, right]]
+      until stack.empty?
+        action, left_value, right_value = stack.pop
+        if action == :result
+          return left_value unless left_value.zero?
+          next
+        end
 
-      case left_type
-      when 'null'
-        0
-      when 'boolean'
-        bool_rank(left) <=> bool_rank(right)
-      when 'number'
-        numeric_compare(left, right)
-      when 'string'
-        left <=> right
-      when 'array'
-        compare_arrays(left, right)
-      when 'object'
-        compare_objects(left, right)
+        left_type = type_of(left_value)
+        right_type = type_of(right_value)
+        type_cmp = TYPE_ORDER.fetch(left_type) <=> TYPE_ORDER.fetch(right_type)
+        return type_cmp unless type_cmp.zero?
+
+        cmp = case left_type
+              when 'null' then 0
+              when 'boolean' then bool_rank(left_value) <=> bool_rank(right_value)
+              when 'number' then numeric_compare(left_value, right_value)
+              when 'string' then left_value <=> right_value
+              when 'array'
+                push_array_comparison(stack, left_value, right_value)
+                0
+              when 'object'
+                push_object_comparison(stack, left_value, right_value)
+                0
+              end
+        return cmp unless cmp.zero?
       end
+      0
+    end
+
+    def merge_objects(left, right)
+      merged = left.merge(right)
+      stack = [[left, right, merged]]
+      until stack.empty?
+        left_object, right_object, output = stack.pop
+        right_object.each do |key, right_value|
+          left_value = left_object[key]
+          next unless left_value.is_a?(Hash) && right_value.is_a?(Hash)
+
+          child = left_value.merge(right_value)
+          output[key] = child
+          stack << [left_value, right_value, child]
+        end
+      end
+      merged
     end
 
     def deep_copy(value)
@@ -241,28 +267,21 @@ module Rjq
     end
     private_class_method :comparable_number
 
-    def compare_arrays(left, right)
-      max = [left.length, right.length].min
-      max.times do |index|
-        cmp = compare(left[index], right[index])
-        return cmp unless cmp.zero?
-      end
-      left.length <=> right.length
+    def push_array_comparison(stack, left, right)
+      length = [left.length, right.length].min
+      stack << [:result, left.length <=> right.length, nil]
+      (length - 1).downto(0) { |index| stack << [:compare, left[index], right[index]] }
     end
-    private_class_method :compare_arrays
+    private_class_method :push_array_comparison
 
-    def compare_objects(left, right)
+    def push_object_comparison(stack, left, right)
       left_keys = left.keys.sort
       right_keys = right.keys.sort
-      key_cmp = compare_arrays(left_keys, right_keys)
-      return key_cmp unless key_cmp.zero?
-
-      left_keys.each do |key|
-        value_cmp = compare(left[key], right[key])
-        return value_cmp unless value_cmp.zero?
+      if left_keys == right_keys
+        left_keys.reverse_each { |key| stack << [:compare, left.fetch(key), right.fetch(key)] }
       end
-      0
+      push_array_comparison(stack, left_keys, right_keys)
     end
-    private_class_method :compare_objects
+    private_class_method :push_object_comparison
   end
 end

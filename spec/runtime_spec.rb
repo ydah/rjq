@@ -15,6 +15,24 @@ RSpec.describe Rjq do
     expect(described_class.run('contains($needle)', container, variables: { 'needle' => contained }).to_a).to eq([true])
   end
 
+  it 'sorts and merges deeply nested values without recursion' do
+    lesser = 0
+    greater = 1
+    left = { 'left' => true }
+    right = { 'right' => true }
+    20_000.times do
+      lesser = [{ 'value' => lesser }]
+      greater = [{ 'value' => greater }]
+      left = { 'child' => left }
+      right = { 'child' => right }
+    end
+
+    expect(described_class.run('sort', [greater, lesser]).to_a).to eq([[lesser, greater]])
+    merged = described_class.run('. * $right', left, variables: { 'right' => right }).to_a.fetch(0)
+    20_000.times { merged = merged.fetch('child') }
+    expect(merged).to eq({ 'left' => true, 'right' => true })
+  end
+
   it 'reports multiline filter source locations independently of input locations' do
     filter = "\n$__loc__,\n$__loc__"
 

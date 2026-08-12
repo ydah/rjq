@@ -46,6 +46,52 @@ RSpec.describe Rjq::Value do
     expect(described_class.equal?(left, right)).to eq(described_class.compare(left, right).zero?)
   end
 
+  it 'compares deeply nested arrays and objects without recursion' do
+    lesser = 0
+    greater = 1
+    20_000.times do
+      lesser = [{ 'value' => lesser }]
+      greater = [{ 'value' => greater }]
+    end
+
+    expect(described_class.compare(lesser, greater)).to be_negative
+    expect(described_class.compare(greater, lesser)).to be_positive
+    expect(described_class.compare(lesser, lesser)).to be_zero
+  end
+
+  it 'preserves comparator order properties across numeric representations' do
+    values = [
+      Float::NAN, -Float::INFINITY, Rjq::Number.parse('-9007199254740993'), -1, -0.0, 0,
+      Rjq::Number.parse('0.0000000000000000001'), 1.0, Rjq::Number.parse('9007199254740993'),
+      9_007_199_254_740_994, Float::INFINITY
+    ]
+
+    values.product(values).each do |left, right|
+      comparison = described_class.compare(left, right)
+      reverse = described_class.compare(right, left)
+      expect(comparison <=> 0).to eq(-(reverse <=> 0))
+      expect(comparison).to be_zero if described_class.equal?(left, right)
+    end
+    values.product(values, values).each do |left, middle, right|
+      next unless described_class.compare(left, middle) <= 0 && described_class.compare(middle, right) <= 0
+
+      expect(described_class.compare(left, right)).to be <= 0
+    end
+  end
+
+  it 'merges deeply nested objects without recursion' do
+    left = { 'left' => true }
+    right = { 'right' => true }
+    20_000.times do
+      left = { 'child' => left }
+      right = { 'child' => right }
+    end
+
+    merged = described_class.merge_objects(left, right)
+    20_000.times { merged = merged.fetch('child') }
+    expect(merged).to eq({ 'left' => true, 'right' => true })
+  end
+
   it 'treats only null and false as falsey' do
     expect(described_class.truthy?(nil)).to be(false)
     expect(described_class.truthy?(false)).to be(false)

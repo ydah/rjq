@@ -1131,9 +1131,7 @@ module Rjq
     end
 
     def recursive_merge(left, right)
-      left.merge(right) do |_key, left_value, right_value|
-        left_value.is_a?(Hash) && right_value.is_a?(Hash) ? recursive_merge(left_value, right_value) : right_value
-      end
+      Value.merge_objects(left, right)
     end
 
     def replace_slice(target, start_index, finish_index, replacement)
