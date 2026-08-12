@@ -4,6 +4,17 @@ require 'spec_helper'
 require 'tmpdir'
 
 RSpec.describe Rjq do
+  it 'checks containment in deeply nested values without recursion' do
+    container = 'needle in haystack'
+    contained = 'needle'
+    20_000.times do
+      container = { 'child' => [container] }
+      contained = { 'child' => [contained] }
+    end
+
+    expect(described_class.run('contains($needle)', container, variables: { 'needle' => contained }).to_a).to eq([true])
+  end
+
   it 'reports multiline filter source locations independently of input locations' do
     filter = "\n$__loc__,\n$__loc__"
 

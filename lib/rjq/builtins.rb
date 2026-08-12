@@ -1084,16 +1084,79 @@ module Rjq
     end
 
     def contains?(container, contained)
-      case [container, contained]
-      in [Hash, Hash]
-        contained.all? { |key, value| container.key?(key) && contains?(container[key], value) }
-      in [Array, Array]
-        contained.all? { |needle| container.any? { |item| contains?(item, needle) } }
-      in [String, String]
-        container.include?(contained)
-      else
-        Value.equal?(container, contained)
+      tasks = [[:evaluate, container, contained]]
+      results = []
+      until tasks.empty?
+        action, *values = tasks.pop
+        case action
+        when :evaluate
+          candidate, needle = values
+          if candidate.is_a?(Hash) && needle.is_a?(Hash)
+            entries = needle.to_a
+            unless entries.all? { |key, _value| candidate.key?(key) }
+              results << false
+              next
+            end
+
+            tasks << [:hash_all, candidate, entries, 0]
+          elsif candidate.is_a?(Array) && needle.is_a?(Array)
+            tasks << [:array_all, candidate, needle, 0]
+          elsif candidate.is_a?(String) && needle.is_a?(String)
+            results << candidate.include?(needle)
+          else
+            results << Value.equal?(candidate, needle)
+          end
+        when :hash_all
+          candidate, entries, index = values
+          if index >= entries.length
+            results << true
+          else
+            key, needle = entries[index]
+            tasks << [:hash_after, candidate, entries, index]
+            tasks << [:evaluate, candidate.fetch(key), needle]
+          end
+        when :hash_after
+          candidate, entries, index = values
+          if results.pop
+            tasks << [:hash_all, candidate, entries, index + 1]
+          else
+            results << false
+          end
+        when :array_all
+          candidate, needles, needle_index = values
+          if needle_index >= needles.length
+            results << true
+          elsif candidate.empty?
+            results << false
+          else
+            tasks << [:array_all_after, candidate, needles, needle_index]
+            tasks << [:array_any, candidate, needles.fetch(needle_index), 0]
+          end
+        when :array_all_after
+          candidate, needles, needle_index = values
+          if results.pop
+            tasks << [:array_all, candidate, needles, needle_index + 1]
+          else
+            results << false
+          end
+        when :array_any
+          candidate, needle, candidate_index = values
+          if candidate_index >= candidate.length
+            results << false
+          else
+            tasks << [:array_any_after, candidate, needle, candidate_index]
+            tasks << [:evaluate, candidate.fetch(candidate_index), needle]
+          end
+        when :array_any_after
+          candidate, needle, candidate_index = values
+          if results.pop
+            results << true
+          else
+            tasks << [:array_any, candidate, needle, candidate_index + 1]
+          end
+        end
       end
+      results.fetch(0)
     end
 
     def index_of(input, needle)

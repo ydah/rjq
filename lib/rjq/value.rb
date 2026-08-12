@@ -77,19 +77,32 @@ module Rjq
     private_class_method :enter_validation_container!
 
     def equal?(left, right)
-      left_type = type_of(left)
-      right_type = type_of(right)
-      return numeric_equal?(left, right) if left_type == 'number' && right_type == 'number'
-      return false unless left_type == right_type
+      stack = [[left, right]]
+      until stack.empty?
+        left_value, right_value = stack.pop
+        left_type = type_of(left_value)
+        right_type = type_of(right_value)
+        if left_type == 'number' && right_type == 'number'
+          return false unless numeric_equal?(left_value, right_value)
+          next
+        end
+        return false unless left_type == right_type
 
-      case left_type
-      when 'array'
-        left.length == right.length && left.zip(right).all? { |a, b| equal?(a, b) }
-      when 'object'
-        left.keys.sort == right.keys.sort && left.all? { |key, value| right.key?(key) && equal?(value, right[key]) }
-      else
-        left == right
+        case left_type
+        when 'array'
+          return false unless left_value.length == right_value.length
+
+          (left_value.length - 1).downto(0) { |index| stack << [left_value[index], right_value[index]] }
+        when 'object'
+          left_keys = left_value.keys.sort
+          return false unless left_keys == right_value.keys.sort
+
+          left_keys.reverse_each { |key| stack << [left_value.fetch(key), right_value.fetch(key)] }
+        else
+          return false unless left_value == right_value
+        end
       end
+      true
     end
 
     def compare(left, right)

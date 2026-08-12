@@ -23,6 +23,20 @@ RSpec.describe Rjq::Value do
     expect(described_class.equal?({ 'a' => 1 }, { 'a' => 1.0 })).to be(true)
   end
 
+  it 'compares deeply nested values for equality without recursion' do
+    left = 'leaf'
+    right = +'leaf'
+    different = 'other'
+    20_000.times do
+      left = [{ 'value' => left }]
+      right = [{ 'value' => right }]
+      different = [{ 'value' => different }]
+    end
+
+    expect(described_class.equal?(left, right)).to be(true)
+    expect(described_class.equal?(left, different)).to be(false)
+  end
+
   it 'compares untouched large literals exactly and keeps comparison consistent with equality' do
     left = Rjq::Number.parse('13911860366432393')
     right = Rjq::Number.parse('13911860366432392')
