@@ -286,7 +286,7 @@ module Rjq
     def parse_operator_prefix
       if current.value == '-'
         consume
-        AST::UnaryOp.new('-', parse_expression(11))
+        AST::UnaryOp.new('-', parse_expression(10))
       elsif current.value == '..'
         consume
         AST::Recurse.new

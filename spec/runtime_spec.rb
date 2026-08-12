@@ -255,6 +255,8 @@ RSpec.describe Rjq do
     expect(described_class.run('"a1b2" | split("([0-9])"; "")', nil).to_a).to eq([["a", "b", ""]])
     expect(described_class.run('"abc" | split(""; "")', nil).to_a).to eq([["", "a", "b", "c", ""]])
     expect(described_class.run('"abc" | split(""; "n")', nil).to_a).to eq([["abc"]])
+    expect(described_class.run('"💩é" | split(""; "")', nil).to_a)
+      .to eq([["", "💩", "", "", "", "é", "", ""]])
   end
 
   it 'matches jq integer remainder and empty string division semantics' do
@@ -264,6 +266,8 @@ RSpec.describe Rjq do
     expect(described_class.run('["ab"/"", ""/""]', nil).to_a).to eq([[%w[a b], []]])
     expect { described_class.run('2%0.9', nil).to_a }
       .to raise_error(Rjq::TypeError, /divisor is zero/)
+    expect(described_class.run('[-0.1%2, -1.5%1, -0.0%2]', nil).to_a).to eq([[-0.0, -0.0, -0.0]])
+    expect(described_class.run('[infinite%(-infinite)]', nil).to_a).to eq([[9_223_372_036_854_776_000]])
   end
 
   it 'preserves generated regex replacements and validates base64 input' do

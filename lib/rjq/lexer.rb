@@ -232,7 +232,6 @@ module Rjq
 
     def read_number
       start = @index
-      advance if current == '-'
       advance while digit?(current)
       if current == '.'
         advance
@@ -271,16 +270,7 @@ module Rjq
     end
 
     def number_start?(char)
-      digit?(char) || (char == '-' && digit?(@source[@index + 1]) && prefix_position?)
-    end
-
-    def prefix_position?
-      previous = @tokens.last
-      return true unless previous
-      return false if %i[number string variable identifier rparen rbracket rbrace].include?(previous.type)
-      return false if previous.type == :keyword && %w[null true false].include?(previous.value)
-
-      true
+      digit?(char)
     end
 
     def identifier_start?(char)

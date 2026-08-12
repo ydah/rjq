@@ -14,11 +14,11 @@ RSpec.describe Rjq::Lexer do
     expect(token.value).to eq([[:text, 'hi '], [:expr, '.name']])
   end
 
-  it 'keeps negative zero number literals' do
-    value = described_class.new('-0').tokenize.first.value
+  it 'tokenizes negative zero as unary minus and a number literal' do
+    tokens = described_class.new('-0').tokenize
 
-    expect(value).to eq(0.0)
-    expect(1.0 / value).to eq(-Float::INFINITY)
+    expect(tokens.first).to have_attributes(type: :operator, value: '-')
+    expect(tokens[1]).to have_attributes(type: :number, value: 0)
   end
 
   it 'accepts comments by default and can disable them explicitly' do

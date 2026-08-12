@@ -720,6 +720,8 @@ module Rjq
                     "#{Value.type_of(value)} (#{AST.short_dump(value)}) cannot be negated"
             end
 
+            next -0.0 if value.zero?
+
             value * -1
           when 'not'
             !Value.truthy?(value)
@@ -852,6 +854,12 @@ module Rjq
         raise TypeError, division_by_zero_message(left, right, 'divided (remainder)') if right_integer.zero?
 
         remainder = left_integer.remainder(right_integer)
+        if remainder.zero? && left.is_a?(Float) && left.zero? && (1.0 / left).negative?
+          return -0.0
+        end
+        return remainder.to_f.round(-3) if (nonfinite_number?(left) || nonfinite_number?(right)) &&
+                                           unsafe_integer?(remainder)
+
         unsafe_integer?(remainder) ? remainder.to_f : remainder
       end
 
@@ -860,6 +868,10 @@ module Rjq
         return -(2**63) if value.respond_to?(:infinite?) && value.infinite? == -1
 
         [[value.to_i, -(2**63)].max, (2**63) - 1].min
+      end
+
+      def nonfinite_number?(value)
+        value.respond_to?(:finite?) && !value.finite?
       end
 
       def numeric_pair(left, right)

@@ -727,6 +727,7 @@ module Rjq
         regex, flags = regexp(input, context, args)
         matches = string.to_enum(:scan, regex).map { Regexp.last_match }
         matches.reject! { |match| match[0].empty? } if flags.include?('n')
+        matches = expand_utf8_empty_matches(string, matches) unless flags.include?('n')
         return split_at_matches(string, matches)
       end
 
@@ -744,7 +745,21 @@ module Rjq
         part = string[offset...match.begin(0)].to_s
         offset = match.end(0)
         part
-      end << string[offset..].to_s
+      end.tap do |parts|
+        parts << string[offset..].to_s
+        parts << '' if matches.last[0].empty? && matches.last.end(0) < string.length
+      end
+    end
+
+    def expand_utf8_empty_matches(string, matches)
+      matches.flat_map do |match|
+        repeats = 1
+        if match[0].empty? && match.begin(0).positive?
+          previous = string[match.begin(0) - 1]
+          repeats = previous.bytesize if previous
+        end
+        [match] * repeats
+      end
     end
 
     def implode(input)
