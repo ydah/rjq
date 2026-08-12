@@ -34,11 +34,14 @@ module Rjq
       '%' => 10
     }.freeze
 
-    def initialize(source, allow_comments: true, source_name: '<top-level>')
+    def initialize(source, allow_comments: true, source_name: '<top-level>', initial_line: 1, initial_column: 1,
+                   start_offset: 0)
       @tokens = if source.is_a?(Array)
                   source
                 else
-                  Lexer.new(source, allow_comments: allow_comments, source_name: source_name).tokenize
+                  Lexer.new(source, allow_comments: allow_comments, source_name: source_name,
+                                    initial_line: initial_line, initial_column: initial_column,
+                                    start_offset: start_offset).tokenize
                 end
       @index = 0
       @definitions = []

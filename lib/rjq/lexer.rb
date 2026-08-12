@@ -2,6 +2,7 @@
 
 module Rjq
   Token = Struct.new(:type, :value, :line, :column, :start_offset, :end_offset, :filename, keyword_init: true)
+  SourceFragment = Struct.new(:source, :filename, :line, :column, :start_offset, keyword_init: true)
 
   class Lexer
     KEYWORDS = %w[
@@ -36,13 +37,15 @@ module Rjq
 
     attr_reader :tokens
 
-    def initialize(source, allow_comments: true, source_name: '<top-level>')
+    def initialize(source, allow_comments: true, source_name: '<top-level>', initial_line: 1, initial_column: 1,
+                   start_offset: 0)
       @source = source.to_s
       @allow_comments = allow_comments
       @source_name = source_name
+      @offset_base = start_offset
       @index = 0
-      @line = 1
-      @column = 1
+      @line = initial_line
+      @column = initial_column
       @tokens = []
     end
 
@@ -82,14 +85,15 @@ module Rjq
             read_operator_or_punctuation(start_line, start_column)
           end
         if token
-          token.start_offset = start_offset
-          token.end_offset = @index
+          token.start_offset = @offset_base + start_offset
+          token.end_offset = @offset_base + @index
           token.filename = @source_name
           @tokens << token
         end
       end
-      @tokens << Token.new(type: :eof, value: nil, line: @line, column: @column, start_offset: @index,
-                           end_offset: @index, filename: @source_name)
+      offset = @offset_base + @index
+      @tokens << Token.new(type: :eof, value: nil, line: @line, column: @column, start_offset: offset,
+                           end_offset: offset, filename: @source_name)
       @tokens
     end
 
@@ -131,7 +135,17 @@ module Rjq
             advance
             segments << [:text, buffer] unless buffer.empty?
             buffer = +''
-            segments << [:expr, read_interpolation]
+            fragment_line = @line
+            fragment_column = @column
+            fragment_offset = @offset_base + @index
+            fragment = SourceFragment.new(
+              source: read_interpolation,
+              filename: @source_name,
+              line: fragment_line,
+              column: fragment_column,
+              start_offset: fragment_offset
+            )
+            segments << [:expr, fragment]
           else
             buffer << read_escape
           end

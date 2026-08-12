@@ -16,6 +16,7 @@ The fixture source tag and file checksums are recorded in `spec/fixtures/jq/mani
 | Errors | Compile, runtime, input parse, `halt`, `halt_error`, and `-e` statuses follow the jq status classes documented below. |
 | Input | Top-level JSON and `--stream` parse incrementally. Multiple files form one logical stream; only slurp and aggregating filters intentionally collect. |
 | Modules | Directives are parsed syntax, paths are canonicalized, fixture resolution is test-only, and traversal, symlink, size, depth, and cycle checks are enforced. |
+| Filter locations | `$__loc__` and disassembly use filter-source positions, including module and interpolation sources. `-f` filenames are reported as canonical absolute paths. Input filenames and line numbers remain separate. |
 | Regex | Ruby's regular-expression engine is used. jq's `m`, `s`, and `p` mode mapping is preserved; advanced Oniguruma behavior can differ. Ruby API callers may set `regexp_timeout` on runtimes that support per-expression timeouts. |
 | Date/time | UTC conversion is host-timezone independent; platform date ranges can still differ. |
 | Math | jq 1.7.1 builtin names and arities are declared. Bessel, fused multiply-add, IEEE remainder, and scaling functions use the platform C math library through `fiddle` when available. |

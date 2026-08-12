@@ -5,9 +5,10 @@ module Rjq
     Result = Struct.new(:program, :metadata, :variables, keyword_init: true)
     MAX_DEPTH = 64
 
-    def initialize(resolver)
+    def initialize(resolver, allow_comments: true)
       @resolver = resolver
       @cache = {}
+      @allow_comments = allow_comments
     end
 
     def load(program, source_path: nil, stack: [])
@@ -38,7 +39,7 @@ module Rjq
 
         loaded, parsed = @cache[source.path]
         unless loaded
-          parsed = Parser.new(source.content, source_name: source.path).parse
+          parsed = Parser.new(source.content, source_name: source.path, allow_comments: @allow_comments).parse
           loaded = load(parsed, source_path: source.path, stack: stack + [source.path])
           @cache[source.path] = [loaded, parsed]
         end

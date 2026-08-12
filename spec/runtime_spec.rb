@@ -19,6 +19,32 @@ RSpec.describe Rjq do
     expect(described_class.run(filter, nil).to_a).to eq([[2, 3, 4]])
   end
 
+  it 'preserves outer source positions in normal and format interpolation' do
+    normal = "\n\n\"x\\(\n$__loc__)\""
+    formatted = "\n\n@json \"x\\(\n$__loc__)\""
+    expected = 'x{"file":"/tmp/filter.jq","line":4}'
+
+    expect(described_class.run(normal, nil, source_path: '/tmp/filter.jq').to_a).to eq([expected])
+    expect(described_class.run(formatted, nil, source_path: '/tmp/filter.jq').to_a).to eq([expected])
+    expect(described_class.run('"x\\(1 # comment\n)"', nil).to_a).to eq(['x1'])
+    expect { described_class.compile('"x\\(1 # comment\n)"', allow_comments: false) }
+      .to raise_error(Rjq::ParseError, /comments are disabled/)
+  end
+
+  it 'preserves module locations through definitions and interpolation' do
+    Dir.mktmpdir do |dir|
+      module_path = File.join(dir, 'where.jq')
+      File.write(module_path, "def where:\n  [$__loc__,\n   (\"\\(\n$__loc__)\" | fromjson)];\n")
+
+      locations = described_class.run('include "where"; where', nil, library_path: [dir]).to_a.fetch(0)
+
+      expect(locations).to eq([
+        { 'file' => File.realpath(module_path), 'line' => 2 },
+        { 'file' => File.realpath(module_path), 'line' => 4 }
+      ])
+    end
+  end
+
   it 'runs identity, field access, pipes, and iteration' do
     expect(described_class.run('.foo | .[]', { 'foo' => [1, 2, 3] }).to_a).to eq([1, 2, 3])
   end

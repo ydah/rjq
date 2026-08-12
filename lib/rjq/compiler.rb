@@ -24,10 +24,11 @@ module Rjq
   end
 
   class BytecodeCompiler
-    def initialize
+    def initialize(allow_comments: true)
       @constants = []
       @constant_indices = {}
       @current_nodes = []
+      @allow_comments = allow_comments
     end
 
     def compile(ast, module_metadata: {}, module_variables: {})
@@ -135,7 +136,12 @@ module Rjq
     def compile_string_segment(kind, value)
       return { kind: :text, value: value } if kind == :text
 
-      parsed = Parser.new(value).parse
+      fragment = value.is_a?(SourceFragment) ? value : SourceFragment.new(
+        source: value, filename: '<top-level>', line: 1, column: 1, start_offset: 0
+      )
+      parsed = Parser.new(fragment.source, allow_comments: @allow_comments, source_name: fragment.filename,
+                                          initial_line: fragment.line, initial_column: fragment.column,
+                                          start_offset: fragment.start_offset).parse
       { kind: :expr, block: block_for(parsed.body), definitions: parsed.definitions.map do |definition|
         compile_definition(definition)
       end }
@@ -259,9 +265,10 @@ module Rjq
       parsed = Parser.new(filter_string, allow_comments: @opts.fetch(:allow_comments, true),
                                          source_name: source_path).parse
       resolver = @opts[:module_resolver] || default_module_resolver
-      loaded = ModuleLoader.new(resolver).load(parsed, source_path: @opts[:source_path])
+      allow_comments = @opts.fetch(:allow_comments, true)
+      loaded = ModuleLoader.new(resolver, allow_comments: allow_comments).load(parsed, source_path: @opts[:source_path])
       ast = loaded.program
-      program = BytecodeCompiler.new.compile(
+      program = BytecodeCompiler.new(allow_comments: allow_comments).compile(
         ast,
         module_metadata: loaded.metadata,
         module_variables: loaded.variables

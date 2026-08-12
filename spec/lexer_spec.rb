@@ -11,7 +11,11 @@ RSpec.describe Rjq::Lexer do
 
   it 'keeps interpolated string segments' do
     token = described_class.new('"hi \\(.name)"').tokenize.first
-    expect(token.value).to eq([[:text, 'hi '], [:expr, '.name']])
+    expect(token.value.first).to eq([:text, 'hi '])
+    kind, fragment = token.value.last
+    expect(kind).to eq(:expr)
+    expect(fragment).to have_attributes(source: '.name', filename: '<top-level>', line: 1, column: 7,
+                                        start_offset: 6)
   end
 
   it 'tokenizes negative zero as unary minus and a number literal' do
