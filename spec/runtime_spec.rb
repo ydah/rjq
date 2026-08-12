@@ -270,6 +270,17 @@ RSpec.describe Rjq do
     expect(described_class.run('[infinite%(-infinite)]', nil).to_a).to eq([[9_223_372_036_854_776_000]])
   end
 
+  it 'preserves jq Cartesian order for generated binary operands' do
+    filter = '[(infinite,-infinite) % (1,-1,infinite,-infinite)]'
+    expect(described_class.run(filter, nil).to_a)
+      .to eq([[0, 0, 0, 0, 0, -1, 9_223_372_036_854_776_000, 0]])
+
+    values = []
+    output = described_class.run('(1,2) + (10,error("right boom"))', nil)
+    expect { output.each { |value| values << value } }.to raise_error(Rjq::ErrorValue, 'right boom')
+    expect(values).to eq([11, 12])
+  end
+
   it 'preserves generated regex replacements and validates base64 input' do
     expect(described_class.run('"a" | sub("a"; ["x","y"][])', nil).to_a).to eq(%w[x y])
     expect(described_class.run('"ab" | gsub("(?<x>.)"; [.x|ascii_upcase,ascii_downcase][])', nil).to_a)
