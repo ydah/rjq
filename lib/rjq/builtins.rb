@@ -927,11 +927,10 @@ module Rjq
       depth = input
       Enumerator.new do |yielder|
         filter_stream(args.fetch(0), nil, context).each do |event|
-          event = assert_array(event)
-          path = event[0]
+          path = Path.read_index(event, 0)
           next unless Value.compare(length(path), depth).positive?
 
-          updated = event.dup
+          updated = event.nil? ? [] : event.dup
           updated[0] = truncate_path(path, depth)
           yielder << updated
         end
@@ -1173,10 +1172,12 @@ module Rjq
             next
           end
 
-          numeric_index = numeric(raw_index)
-          raise RuntimeError, "nth doesn't support negative indices" if numeric_index < 0
+          index = nth_filter_index(raw_index)
+          if index.respond_to?(:infinite?) && index.infinite?
+            filter_stream(args[1], input, context).each { |_value| nil }
+            next
+          end
 
-          index = numeric_index.ceil
           values = args[1].take(input, context, index + 1)
           yielder << values[index] if index < values.length
         end
@@ -1190,6 +1191,22 @@ module Rjq
                 raw_index
               end
       Path.read_index(input, index)
+    end
+
+    def nth_filter_index(value)
+      if value.is_a?(Numeric)
+        raise RuntimeError, "nth doesn't support negative indices" if value.respond_to?(:nan?) && value.nan?
+        raise RuntimeError, "nth doesn't support negative indices" if value < 0
+        return value if value.respond_to?(:infinite?) && value.infinite?
+
+        return value.ceil
+      end
+      if value.nil? || value == true || value == false
+        raise RuntimeError, "nth doesn't support negative indices"
+      end
+
+      raise TypeError,
+            "#{Value.type_of(value)} (#{short_dump(value)}) and number (1) cannot be added"
     end
 
     def limit(input, context, args)

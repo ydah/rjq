@@ -56,6 +56,22 @@ RSpec.describe Rjq do
     expect(values).to eq([10])
   end
 
+  it 'handles special nth filter indices without leaking host exceptions' do
+    filter = '[(nan,infinite,-infinite,null,false,true,"1",[],{}) as $i | ' \
+             'try [nth($i;(10,20,30))] catch .]'
+    expect(described_class.run(filter, nil).to_a).to eq([[
+      "nth doesn't support negative indices", [], "nth doesn't support negative indices",
+      "nth doesn't support negative indices", "nth doesn't support negative indices",
+      "nth doesn't support negative indices", 'string ("1") and number (1) cannot be added',
+      'array ([]) and number (1) cannot be added', 'object ({}) and number (1) cannot be added'
+    ]])
+
+    expect { described_class.run('nth(nan; 1)', nil).to_a }
+      .to raise_error(Rjq::RuntimeError, "nth doesn't support negative indices")
+    expect(described_class.run('[nth(infinite; (1,2,3))]', nil).to_a).to eq([[]])
+    expect(described_class.run('try nth(infinite; error("reached")) catch .', nil).to_a).to eq(['reached'])
+  end
+
   it 'traverses deeply nested values without Ruby recursion' do
     nested = 0
     10_000.times { nested = [nested] }
@@ -399,6 +415,21 @@ RSpec.describe Rjq do
 
   it 'evaluates the truncate stream filter with null input' do
     expect(described_class.run('2 | truncate_stream(([[0,1,2], .]))', 7).to_a).to eq([[[2], nil]])
+  end
+
+  it 'reports jq-compatible errors for non-array truncate stream events' do
+    {
+      '1' => 'Cannot index number with number',
+      '"x"' => 'Cannot index string with number',
+      'true' => 'Cannot index boolean with number',
+      '{}' => 'Cannot index object with number'
+    }.each do |event, message|
+      expect { described_class.run("0 | truncate_stream(#{event})", nil).to_a }
+        .to raise_error(Rjq::TypeError, message)
+    end
+
+    expect(described_class.run('0 | truncate_stream(null)', nil).to_a).to eq([])
+    expect(described_class.run('(-1) | truncate_stream(null)', nil).to_a).to eq([[nil]])
   end
 
   it 'supports SQL-style INDEX and IN' do
