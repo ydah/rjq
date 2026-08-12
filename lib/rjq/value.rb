@@ -75,15 +75,74 @@ module Rjq
     end
 
     def deep_copy(value)
+      root = []
+      active = {}
+      stack = [[:copy, value, [:array, root, 0]]]
+      until stack.empty?
+        type, source, target = stack.pop
+        case type
+        when :leave
+          active.delete(source)
+        when :array_items
+          original, copy, index = source
+          next if index >= original.length
+
+          stack << [:array_items, [original, copy, index + 1], nil]
+          stack << [:copy, original[index], [:array, copy, index]]
+        when :object_items
+          original, copy, keys, index = source
+          next if index >= keys.length
+
+          key = keys[index]
+          stack << [:object_items, [original, copy, keys, index + 1], nil]
+          stack << [:copy, original.fetch(key), [:object, copy, key.dup]]
+        when :copy
+          copied = copy_scalar(source)
+          if source.is_a?(Array)
+            enter_copy_container!(source, active)
+            copied = Array.new(source.length)
+            stack << [:leave, source.object_id, nil]
+            stack << [:array_items, [source, copied, 0], nil]
+          elsif source.is_a?(Hash)
+            validate_copy_keys!(source)
+            enter_copy_container!(source, active)
+            copied = {}
+            stack << [:leave, source.object_id, nil]
+            stack << [:object_items, [source, copied, source.keys, 0], nil]
+          end
+          assign_copy(target, copied)
+        end
+      end
+      root.fetch(0)
+    end
+
+    def copy_scalar(value)
       case value
-      when Array
-        value.map { |item| deep_copy(item) }
-      when Hash
-        value.each_with_object({}) { |(key, item), out| out[key] = deep_copy(item) }
-      else
-        value
+      when String then value.dup
+      when NilClass, TrueClass, FalseClass, Numeric, Array, Hash then value
+      else raise TypeError, "unsupported value type: #{value.class}"
       end
     end
+    private_class_method :copy_scalar
+
+    def enter_copy_container!(value, active)
+      raise TypeError, 'cannot copy a cyclic JSON value' if active[value.object_id]
+
+      active[value.object_id] = true
+    end
+    private_class_method :enter_copy_container!
+
+    def validate_copy_keys!(value)
+      invalid = value.keys.find { |key| !key.is_a?(String) }
+      raise TypeError, "object key must be a string, got #{invalid.class}" if invalid
+    end
+    private_class_method :validate_copy_keys!
+
+    def assign_copy(target, value)
+      _type, container, key = target
+      container[key] = value
+    end
+    private_class_method :assign_copy
 
     def numeric_equal?(left, right)
       return false if nan_number?(left) || nan_number?(right)

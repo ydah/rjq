@@ -305,7 +305,7 @@ module Rjq
       end
 
       @stdout.print("\x1e") if @opts[:seq]
-      @stdout.print(runtime.format_output(value))
+      runtime.write_output(value, @stdout)
       @stdout.print(output_separator)
       @stdout.flush if @opts[:unbuffered] && @stdout.respond_to?(:flush)
     end

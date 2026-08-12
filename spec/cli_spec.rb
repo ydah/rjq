@@ -50,6 +50,16 @@ RSpec.describe Rjq::CLI do
     expect(out.string).to eq("[1,2,3]\n")
   end
 
+  it 'evaluates sort keys once even when they consume input' do
+    out = StringIO.new
+
+    code = described_class.new(['-nc', '[3,1,2] | sort_by(input)'], stdin: StringIO.new("30\n10\n20\n"),
+                                                                  stdout: out, stderr: StringIO.new).run
+
+    expect(code).to eq(0)
+    expect(out.string).to eq("[1,2,3]\n")
+  end
+
   it 'treats multiple files as one logical input stream' do
     Dir.mktmpdir do |dir|
       first = File.join(dir, 'first.json')

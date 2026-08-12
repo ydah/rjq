@@ -4,28 +4,36 @@ module Rjq
   module JSON
     class Parser
       ParsedValue = Struct.new(:value, :line, keyword_init: true)
+      DEFAULT_MAX_DEPTH = 256
 
       class << self
-        def parse(io_or_string, seq: false, chunk_size: InputBuffer::DEFAULT_CHUNK_SIZE, on_error: nil)
-          new(io_or_string, seq: seq, chunk_size: chunk_size, on_error: on_error).parse_stream
+        def parse(io_or_string, seq: false, chunk_size: InputBuffer::DEFAULT_CHUNK_SIZE, on_error: nil,
+                  max_depth: DEFAULT_MAX_DEPTH)
+          new(io_or_string, seq: seq, chunk_size: chunk_size, on_error: on_error,
+                            max_depth: max_depth).parse_stream
         end
 
-        def parse_one(io_or_string, seq: false)
-          values = parse(io_or_string, seq: seq).take(2)
+        def parse_one(io_or_string, seq: false, max_depth: DEFAULT_MAX_DEPTH)
+          values = parse(io_or_string, seq: seq, max_depth: max_depth).take(2)
           raise JSONParseError, "expected one JSON value, got #{values.length}" unless values.length == 1
 
           values.first
         end
 
-        def parse_records(io_or_string, seq: false, chunk_size: InputBuffer::DEFAULT_CHUNK_SIZE, on_error: nil)
-          new(io_or_string, seq: seq, chunk_size: chunk_size, on_error: on_error).parse_stream(locations: true)
+        def parse_records(io_or_string, seq: false, chunk_size: InputBuffer::DEFAULT_CHUNK_SIZE, on_error: nil,
+                          max_depth: DEFAULT_MAX_DEPTH)
+          new(io_or_string, seq: seq, chunk_size: chunk_size, on_error: on_error,
+                            max_depth: max_depth).parse_stream(locations: true)
         end
       end
 
-      def initialize(input, seq: false, chunk_size: InputBuffer::DEFAULT_CHUNK_SIZE, on_error: nil)
+      def initialize(input, seq: false, chunk_size: InputBuffer::DEFAULT_CHUNK_SIZE, on_error: nil,
+                     max_depth: DEFAULT_MAX_DEPTH)
         @input = InputBuffer.new(input, chunk_size: chunk_size)
         @seq = seq
         @on_error = on_error
+        @max_depth = max_depth
+        @depth = 0
         @index = 0
         @line = 1
         @column = 1
@@ -94,6 +102,10 @@ module Rjq
       end
 
       def parse_object
+        with_container_depth { parse_object_body }
+      end
+
+      def parse_object_body
         advance
         object = {}
         skip_whitespace
@@ -115,6 +127,10 @@ module Rjq
       end
 
       def parse_array
+        with_container_depth { parse_array_body }
+      end
+
+      def parse_array_body
         advance
         array = []
         skip_whitespace
@@ -282,6 +298,15 @@ module Rjq
       def resync_to_record_separator
         advance until eof? || current == "\x1e"
         @input.discard_before(@index)
+      end
+
+      def with_container_depth
+        @depth += 1
+        raise_error('exceeds depth limit for parsing') if @depth > @max_depth
+
+        yield
+      ensure
+        @depth -= 1
       end
 
       def skip_whitespace

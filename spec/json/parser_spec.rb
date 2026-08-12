@@ -89,4 +89,13 @@ RSpec.describe Rjq::JSON::Parser do
     expect { described_class.parse(StringIO.new("\xFF".b), chunk_size: 1).to_a }
       .to raise_error(Rjq::JSONParseError, /invalid UTF-8/)
   end
+
+  it 'enforces the jq-compatible container depth limit' do
+    accepted = ('[' * 256) + '0' + (']' * 256)
+    rejected = ('[' * 257) + '0' + (']' * 257)
+
+    expect(described_class.parse_one(accepted)).to be_a(Array)
+    expect { described_class.parse_one(rejected) }
+      .to raise_error(Rjq::JSONParseError, /exceeds depth limit for parsing/)
+  end
 end

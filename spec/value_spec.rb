@@ -38,4 +38,29 @@ RSpec.describe Rjq::Value do
     expect(described_class.truthy?(0)).to be(true)
     expect(described_class.truthy?('')).to be(true)
   end
+
+  it 'deep-copies strings and deeply nested containers without recursion' do
+    string = +'value'
+    value = string
+    10_000.times { value = [value] }
+
+    copy = described_class.deep_copy(value)
+    original_leaf = value
+    copied_leaf = copy
+    10_000.times do
+      original_leaf = original_leaf.first
+      copied_leaf = copied_leaf.first
+    end
+
+    expect(copied_leaf).to eq('value')
+    expect(copied_leaf).not_to equal(original_leaf)
+  end
+
+  it 'rejects cyclic values and non-JSON object keys during copying' do
+    cyclic = {}
+    cyclic['self'] = cyclic
+
+    expect { described_class.deep_copy(cyclic) }.to raise_error(Rjq::TypeError, /cyclic JSON value/)
+    expect { described_class.deep_copy({ answer: 42 }) }.to raise_error(Rjq::TypeError, /object key must be a string/)
+  end
 end

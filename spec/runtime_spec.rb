@@ -48,6 +48,15 @@ RSpec.describe Rjq do
     expect(yielded).to eq([1])
   end
 
+  it 'supports an optional output budget for embedded callers' do
+    output = described_class.run('range(5)', nil, max_outputs: 2)
+    yielded = []
+
+    expect { output.each { |value| yielded << value } }
+      .to raise_error(Rjq::RuntimeError, /output limit exceeded/)
+    expect(yielded).to eq([0, 1])
+  end
+
   it 'does not let try or optional catch halt signals' do
     expect { described_class.run('try halt catch "caught"', nil).to_a }
       .to raise_error(Rjq::HaltError) { |error| expect(error.status).to eq(0) }

@@ -10,8 +10,15 @@ module Rjq
     def run(input_value)
       Enumerator.new do |yielder|
         context = context_with_definitions(base_context)
+        output_count = 0
         begin
-          each_block(@program.program.instructions, input_value, context).each { |value| yielder << value }
+          each_block(@program.program.instructions, input_value, context).each do |value|
+            output_count += 1
+            max_outputs = @opts[:max_outputs]
+            raise RuntimeError, "output limit exceeded (#{max_outputs})" if max_outputs && output_count > max_outputs
+
+            yielder << value
+          end
         rescue ErrorValue => e
           Array(e.outputs).each { |value| yielder << value }
           raise

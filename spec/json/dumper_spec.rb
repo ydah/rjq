@@ -43,4 +43,34 @@ RSpec.describe Rjq::JSON::Dumper do
     expect(described_class.dump(1e16)).to eq('1e+16')
     expect(described_class.dump(1e100)).to eq('1e+100')
   end
+
+  it 'writes directly to an IO' do
+    io = StringIO.new
+
+    expect(described_class.dump({ 'a' => [1, 2] }, indent: nil, io: io)).to equal(io)
+    expect(io.string).to eq('{"a":[1,2]}')
+  end
+
+  it 'dumps deeply nested arrays without Ruby recursion' do
+    value = 0
+    10_000.times { value = [value] }
+
+    dumped = described_class.dump(value, indent: nil)
+
+    expect(dumped.length).to eq(20_001)
+    expect(dumped).to start_with('[[[[')
+    expect(dumped).to end_with(']]]]')
+  end
+
+  it 'rejects cyclic values and non-string object keys' do
+    cyclic = []
+    cyclic << cyclic
+
+    expect { described_class.dump(cyclic) }.to raise_error(Rjq::TypeError, /cyclic JSON value/)
+    expect { described_class.dump({ answer: 42 }) }.to raise_error(Rjq::TypeError, /object key must be a string/)
+  end
+
+  it 'rejects invalid UTF-8 strings as runtime errors' do
+    expect { described_class.dump("\xFF".b) }.to raise_error(Rjq::TypeError, /invalid UTF-8/)
+  end
 end

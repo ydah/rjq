@@ -947,32 +947,39 @@ module Rjq
     end
 
     def sort_by_filter(input, context, filter)
-      assert_array(input).sort { |a, b| Value.compare(filter_key(a, context, filter), filter_key(b, context, filter)) }
+      decorated_sort(input, context, filter).map(&:first)
     end
 
     def group_by_filter(input, context, filter)
-      sort_by_filter(input, context, filter).chunk do |item|
-        filter_key(item, context, filter)
-      end.map { |_key, values| values }
+      decorated_sort(input, context, filter).each_with_object([]) do |(item, key), groups|
+        if groups.empty? || !Value.equal?(groups.last.fetch(:key), key)
+          groups << { key: key, values: [item] }
+        else
+          groups.last.fetch(:values) << item
+        end
+      end.map { |group| group.fetch(:values) }
     end
 
     def unique_values(array)
       array = array.sort { |a, b| Value.compare(a, b) }
-      out = []
-      array.each do |item|
-        out << item unless out.any? { |seen| Value.equal?(seen, item) }
+      array.each_with_object([]) do |item, out|
+        out << item if out.empty? || !Value.equal?(out.last, item)
       end
-      out
     end
 
     def unique_by_filter(input, context, filter)
-      seen = []
-      sort_by_filter(input, context, filter).each_with_object([]) do |item, out|
-        key = filter_key(item, context, filter)
-        next if seen.any? { |value| Value.equal?(value, key) }
+      unique = decorated_sort(input, context, filter).each_with_object([]) do |(item, key), out|
+        out << [item, key] if out.empty? || !Value.equal?(out.last.last, key)
+      end
+      unique.map(&:first)
+    end
 
-        seen << key
-        out << item
+    def decorated_sort(input, context, filter)
+      assert_array(input).each_with_index.map do |item, index|
+        [item, filter_key(item, context, filter), index]
+      end.sort do |left, right|
+        comparison = Value.compare(left[1], right[1])
+        comparison.zero? ? left[2] <=> right[2] : comparison
       end
     end
 

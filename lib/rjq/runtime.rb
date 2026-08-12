@@ -6,7 +6,7 @@ module Rjq
       compact: false, raw_output: false, raw_output0: false, join_output: false,
       null_input: false, raw_input: false, slurp: false, ascii: false,
       sort_keys: false, tab: false, indent: 2, seq: false, stream: false,
-      stream_errors: false, unbuffered: false, variables: {}
+      stream_errors: false, unbuffered: false, max_outputs: nil, variables: {}
     }.freeze
 
     InputRecord = Struct.new(:value, :filename, :line, keyword_init: true)
@@ -129,10 +129,23 @@ module Rjq
       @opts[:color] ? Color.colorize(dumped) : dumped
     end
 
+    def write_output(value, io)
+      if @opts[:raw_output] && value.is_a?(String)
+        io << value
+      elsif @opts[:color]
+        io << format_output(value)
+      else
+        indent = @opts[:compact] ? nil : @opts[:indent]
+        JSON::Dumper.dump(value, indent: indent, sort_keys: @opts[:sort_keys], ascii: @opts[:ascii],
+                                tab: @opts[:tab], io: io)
+      end
+    end
+
     private
 
     def run_queue(queue, builtin_queue = queue, on_close: nil)
       ResultStream.new(on_close: on_close) do |emit|
+        output_count = 0
         until queue.empty?
           record = queue.shift_record
           run_opts = @opts.merge(
@@ -140,7 +153,13 @@ module Rjq
             remaining_inputs: builtin_queue, current_filename: display_filename(record.filename),
             current_line: record.line
           )
-          @program.run(record.value, run_opts).each { |result| emit.call(result) }
+          @program.run(record.value, run_opts).each do |result|
+            output_count += 1
+            max_outputs = @opts[:max_outputs]
+            raise RuntimeError, "output limit exceeded (#{max_outputs})" if max_outputs && output_count > max_outputs
+
+            emit.call(result)
+          end
         end
       end
     end
@@ -197,7 +216,8 @@ module Rjq
       return stream_records(io, filename) if @opts[:stream]
 
       JSON::Parser.parse_records(io, seq: @opts[:seq], chunk_size: input_chunk_size,
-                                     on_error: method(:warn_ignored_parse_error)).lazy.map do |parsed|
+                                     on_error: method(:warn_ignored_parse_error),
+                                     max_depth: input_max_depth).lazy.map do |parsed|
         InputRecord.new(value: parsed.value, filename: filename, line: parsed.line)
       end
     end
@@ -214,13 +234,18 @@ module Rjq
     def stream_records(io, filename)
       JSON::StreamParser.parse(io, seq: @opts[:seq], stream_errors: @opts[:stream_errors],
                                    chunk_size: input_chunk_size,
-                                   on_error: method(:warn_ignored_parse_error)).lazy.map do |event|
+                                   on_error: method(:warn_ignored_parse_error),
+                                   max_depth: input_max_depth).lazy.map do |event|
         InputRecord.new(value: event, filename: filename, line: 1)
       end
     end
 
     def input_chunk_size
       @opts.fetch(:input_chunk_size, JSON::InputBuffer::DEFAULT_CHUNK_SIZE)
+    end
+
+    def input_max_depth
+      @opts.fetch(:input_max_depth, JSON::Parser::DEFAULT_MAX_DEPTH)
     end
 
     def display_filename(filename)

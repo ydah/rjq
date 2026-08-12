@@ -3,6 +3,7 @@
 module Rjq
   module JSON
     class StreamParser
+      DEFAULT_MAX_DEPTH = 256
       Result = Struct.new(:events, :close_path, keyword_init: true)
       class StreamError < StandardError
         attr_reader :path
@@ -15,18 +16,20 @@ module Rjq
 
       class << self
         def parse(io_or_string, seq: false, stream_errors: false, chunk_size: InputBuffer::DEFAULT_CHUNK_SIZE,
-                  on_error: nil)
+                  on_error: nil, max_depth: DEFAULT_MAX_DEPTH)
           new(io_or_string, seq: seq, stream_errors: stream_errors, chunk_size: chunk_size,
-                            on_error: on_error).parse
+                            on_error: on_error, max_depth: max_depth).parse
         end
       end
 
       def initialize(input, seq: false, stream_errors: false, chunk_size: InputBuffer::DEFAULT_CHUNK_SIZE,
-                     on_error: nil)
+                     on_error: nil, max_depth: DEFAULT_MAX_DEPTH)
         @input = InputBuffer.new(input, chunk_size: chunk_size)
         @seq = seq
         @stream_errors = stream_errors
         @on_error = on_error
+        @max_depth = max_depth
+        @depth = 0
         @index = 0
         @line = 1
         @column = 1
@@ -95,6 +98,10 @@ module Rjq
       end
 
       def parse_object(path)
+        with_container_depth(path) { parse_object_body(path) }
+      end
+
+      def parse_object_body(path)
         advance
         skip_whitespace
         if consume?('}')
@@ -144,6 +151,10 @@ module Rjq
       end
 
       def parse_array(path)
+        with_container_depth(path) { parse_array_body(path) }
+      end
+
+      def parse_array_body(path)
         advance
         skip_whitespace
         if consume?(']')
@@ -325,6 +336,15 @@ module Rjq
       def resync_to_record_separator
         advance until eof? || current == "\x1e"
         @input.discard_before(@index)
+      end
+
+      def with_container_depth(path)
+        @depth += 1
+        raise_error('Exceeds depth limit for parsing', path) if @depth > @max_depth
+
+        yield
+      ensure
+        @depth -= 1
       end
 
       def skip_whitespace

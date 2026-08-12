@@ -25,4 +25,13 @@ RSpec.describe Rjq::JSON::StreamParser do
     expect(events.last).to eq([[], 2])
     expect(errors).to eq([])
   end
+
+  it 'reports excessive nesting as a stream parse error' do
+    input = ('[' * 257) + '0' + (']' * 257)
+
+    event = described_class.parse(input, stream_errors: true).to_a.last
+
+    expect(event.first).to include('Exceeds depth limit for parsing')
+    expect(event.last.length).to eq(256)
+  end
 end
