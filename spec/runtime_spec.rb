@@ -399,6 +399,37 @@ RSpec.describe Rjq do
     expect(described_class.run('foreach [1,2][] as $x (0,10; . + $x; .)', nil).to_a).to eq([1, 3, 11, 13])
   end
 
+  it 'uses only the final update output as the next reduce and foreach state' do
+    reduce = 'reduce (1,2) as $x ((0,10); .+$x, .+$x+100)'
+    foreach = 'foreach (1,2) as $x ((0,10); .+$x, .+$x+100; .)'
+    expect(described_class.run(reduce, nil).to_a).to eq([203, 213])
+    expect(described_class.run(foreach, nil).to_a).to eq([1, 101, 103, 203, 11, 111, 113, 213])
+
+    expect(described_class.run('reduce (1,2) as $x (0; if $x==1 then empty else .+$x end)', nil).to_a)
+      .to eq([2])
+    expect(described_class.run('foreach (1,2) as $x (0; if $x==1 then empty else .+$x end; .)', nil).to_a)
+      .to eq([2])
+    expect(described_class.run('try foreach (1,2) as $x (0; .+$x,error("update boom"); .) catch .', nil).to_a)
+      .to eq([1, 'update boom'])
+    expect(described_class.run('try reduce (1,2) as $x (0; .+$x,error("update boom")) catch .', nil).to_a)
+      .to eq(['update boom'])
+    expect(described_class.run('try reduce (1,2) as $x ((0,error("init boom")); .+$x) catch .', nil).to_a)
+      .to eq([3, 'init boom'])
+    expect(described_class.run('try foreach (1,2) as $x ((0,error("init boom")); .+$x; .) catch .', nil).to_a)
+      .to eq([1, 3, 'init boom'])
+  end
+
+  it 're-runs effectful reduce and foreach generators for each initial output' do
+    reduce_io = StringIO.new('1 2 3 4 5 6 7 8')
+    reduce = 'reduce (input,input) as $x ((input,input); .+$x, .+$x+100)'
+    expect(described_class.run_stream(reduce, io: reduce_io, opts: { null_input: true }).to_a).to eq([206, 215])
+
+    foreach_io = StringIO.new('1 2 3 4 5 6 7 8')
+    foreach = 'foreach (input,input) as $x ((input,input); .+$x, .+$x+100; .)'
+    expect(described_class.run_stream(foreach, io: foreach_io, opts: { null_input: true }).to_a)
+      .to eq([3, 103, 106, 206, 9, 109, 115, 215])
+  end
+
   it 'uses slice components for paths and assignments' do
     input = [0, 1, 2, 3]
     expect(described_class.run('path(.[(0,1):(2,3)])', input).to_a).to eq(

@@ -346,31 +346,31 @@ module Rjq
 
     def reduce_stream(spec, input, context)
       Enumerator.new do |yielder|
-        accumulators = each_block(spec.fetch(:initial).instructions, input, context).to_a
-        each_block(spec.fetch(:generator).instructions, input, context).each do |value|
-          ctx = AST.bind_pattern(context, spec.fetch(:pattern), value)
-          accumulators = accumulators.flat_map do |accumulator|
-            each_block(spec.fetch(:update).instructions, accumulator, ctx).to_a
+        each_block(spec.fetch(:initial).instructions, input, context).each do |initial|
+          accumulator = initial
+          each_block(spec.fetch(:generator).instructions, input, context).each do |value|
+            ctx = AST.bind_pattern(context, spec.fetch(:pattern), value)
+            each_block(spec.fetch(:update).instructions, accumulator, ctx).each do |updated|
+              accumulator = updated
+            end
           end
+          yielder << accumulator
         end
-        accumulators.each { |accumulator| yielder << accumulator }
       end
     end
 
     def foreach_stream(spec, input, context)
       Enumerator.new do |yielder|
         each_block(spec.fetch(:initial).instructions, input, context).each do |initial|
-          accumulators = [initial]
+          accumulator = initial
           each_block(spec.fetch(:generator).instructions, input, context).each do |value|
             ctx = AST.bind_pattern(context, spec.fetch(:pattern), value)
-            accumulators = accumulators.flat_map do |accumulator|
-              each_block(spec.fetch(:update).instructions, accumulator, ctx).to_a
-            end
-            accumulators.each do |accumulator|
+            each_block(spec.fetch(:update).instructions, accumulator, ctx).each do |updated|
+              accumulator = updated
               values = if spec[:extract]
-                         each_block(spec.fetch(:extract).instructions, accumulator, ctx)
+                         each_block(spec.fetch(:extract).instructions, updated, ctx)
                        else
-                         value_stream(accumulator)
+                         value_stream(updated)
                        end
               values.each { |item| yielder << item }
             end
