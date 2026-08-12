@@ -7,3 +7,4 @@ gemspec
 gem 'rake', '>= 13'
 gem 'rspec', '>= 3.12'
 gem 'simplecov', '>= 0.22'
+gem 'benchmark', '>= 0.4'

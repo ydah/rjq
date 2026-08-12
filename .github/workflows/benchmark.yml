@@ -1,0 +1,37 @@
+name: Scheduled benchmark
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: Install pinned jq 1.7.1 oracle
+        run: |
+          curl -fsSL https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64 -o "$RUNNER_TEMP/jq-1.7.1"
+          echo "5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5  $RUNNER_TEMP/jq-1.7.1" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/jq-1.7.1"
+      - name: Record process benchmark
+        run: ITERATIONS=30 bundle exec ruby benchmark/jq_compare.rb | tee benchmark.md
+        env:
+          JQ_BIN: ${{ runner.temp }}/jq-1.7.1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: benchmark-${{ github.run_id }}
+          path: benchmark.md

@@ -1,0 +1,11 @@
+# frozen_string_literal: true
+
+source 'https://rubygems.org'
+
+gemspec path: '..'
+
+gem 'benchmark', '0.4.0'
+gem 'fiddle', '1.1.0'
+gem 'rake', '13.0.1'
+gem 'rspec', '3.12.0'
+gem 'simplecov', '0.22.0'

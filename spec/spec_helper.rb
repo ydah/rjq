@@ -2,7 +2,10 @@
 
 if ENV['COVERAGE']
   require 'simplecov'
-  SimpleCov.start { enable_coverage :branch }
+  SimpleCov.start do
+    enable_coverage :branch
+    minimum_coverage line: 88, branch: 73
+  end
 end
 
 require 'stringio'

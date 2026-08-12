@@ -37,10 +37,11 @@ SCENARIOS = [
 ITERATIONS = Integer(ENV.fetch('ITERATIONS', '10'))
 ROOT = File.expand_path('..', __dir__)
 RJQ = [RbConfig.ruby, File.join(ROOT, 'bin/rjq'), '-c'].freeze
-JQ = ['jq', '-c'].freeze
+JQ_BINARY = ENV.fetch('JQ_BIN', 'jq')
+JQ = [JQ_BINARY, '-c'].freeze
 
 def jq_available?
-  system('jq', '--version', out: File::NULL, err: File::NULL)
+  system(JQ_BINARY, '--version', out: File::NULL, err: File::NULL)
 end
 
 def run_command(command, filter, input)
