@@ -112,6 +112,11 @@ module DifferentialCompat
              filter: '[(infinite,-infinite)%(1,-1,infinite,-infinite)]', input: '', flags: ['-n']),
     Case.new(name: 'binary generator error order',
              filter: '(1,2)+(10,error("right boom"))', input: '', flags: ['-n']),
+    Case.new(name: 'assignment RHS branches',
+             filter: '{a:null,b:2} | [((.a,.b)=(10,20)), ((.a,.b)|=(.,.+10)),' \
+                     '((.a,.b)+=(10,20)), ((.a,.b)//=(10,20))]', input: '', flags: ['-n']),
+    Case.new(name: 'assignment RHS partial error',
+             filter: '{a:1,b:2} | (.a,.b)+=(10,error("rhs boom"))', input: '', flags: ['-n']),
     Case.new(name: 'empty string division', filter: '["ab"/"", ""/""]', input: '', flags: ['-n']),
     Case.new(name: 'generated sub replacement', filter: '"a" | sub("a"; ["x","y"][])', input: '', flags: ['-n']),
     Case.new(name: 'generated gsub replacement',

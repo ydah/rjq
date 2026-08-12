@@ -281,6 +281,23 @@ RSpec.describe Rjq do
     expect(values).to eq([11, 12])
   end
 
+  it 'branches assignment results for each compound right-hand output' do
+    input = { 'a' => 1, 'b' => 2 }
+    expect(described_class.run('(.a,.b) += (10,20)', input).to_a)
+      .to eq([{ 'a' => 11, 'b' => 12 }, { 'a' => 21, 'b' => 22 }])
+    expect(described_class.run('(.a,.b) -= (1,2)', input).to_a)
+      .to eq([{ 'a' => 0, 'b' => 1 }, { 'a' => -1, 'b' => 0 }])
+    expect(described_class.run('(.a,.b) *= (2,3)', input).to_a)
+      .to eq([{ 'a' => 2, 'b' => 4 }, { 'a' => 3, 'b' => 6 }])
+    expect(described_class.run('(.a,.b) /= (2,4)', input).to_a)
+      .to eq([{ 'a' => 0.5, 'b' => 1 }, { 'a' => 0.25, 'b' => 0.5 }])
+
+    values = []
+    output = described_class.run('(.a,.b) += (10,error("rhs boom"))', input)
+    expect { output.each { |value| values << value } }.to raise_error(Rjq::ErrorValue, 'rhs boom')
+    expect(values).to eq([{ 'a' => 11, 'b' => 12 }])
+  end
+
   it 'preserves generated regex replacements and validates base64 input' do
     expect(described_class.run('"a" | sub("a"; ["x","y"][])', nil).to_a).to eq(%w[x y])
     expect(described_class.run('"ab" | gsub("(?<x>.)"; [.x|ascii_upcase,ascii_downcase][])', nil).to_a)

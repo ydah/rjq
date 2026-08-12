@@ -443,7 +443,15 @@ module Rjq
     end
 
     def assignment_stream(spec, input, context)
-      deferred_values_stream { execute_assignment(spec, input, context) }
+      return deferred_values_stream { execute_assignment(spec, input, context) } if spec.fetch(:op) == '|='
+
+      assignment_rhs_stream(spec, input, context)
+    end
+
+    def assignment_rhs_stream(spec, input, context)
+      flat_map_stream(each_block(spec.fetch(:right).instructions, input, context)) do |rhs|
+        value_stream(execute_assignment_with_rhs(spec, input, context, rhs))
+      end
     end
 
     def call_stream(instruction, input, context)
@@ -650,6 +658,25 @@ module Rjq
 
     def execute_assignment(spec, input, context)
       spec.fetch(:op) == '=' ? assign(spec, input, context) : update(spec, input, context)
+    end
+
+    def execute_assignment_with_rhs(spec, input, context, rhs)
+      return assign_value(spec.fetch(:left).instructions, Value.deep_copy(input), input, context, rhs) if spec.fetch(:op) == '='
+
+      update_with_rhs(spec, input, context, rhs)
+    end
+
+    def update_with_rhs(spec, input, context, rhs)
+      operations = paths_for_block(spec.fetch(:left).instructions, input, context).map do |path|
+        current = Path.get(input, path)
+        value = if spec.fetch(:op) == '//='
+                  Value.truthy?(current) ? current : rhs
+                else
+                  apply_binary(spec.fetch(:op).delete_suffix('='), current, rhs)
+                end
+        [path, value]
+      end
+      operations.reduce(Value.deep_copy(input)) { |copy, (path, value)| Path.set(copy, path, value) }
     end
 
     def assign(spec, input, context)
