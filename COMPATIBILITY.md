@@ -23,7 +23,7 @@ The fixture source tag and file checksums are recorded in `spec/fixtures/jq/mani
 ## Known differences
 
 - This is not libjq and does not claim complete source, diagnostic-text, regex-engine, module-layout, or performance compatibility.
-- Regex flags `s`, `p`, and `l`, Unicode offsets, and advanced engine constructs can differ because Ruby Regexp is not jq's bundled Oniguruma build.
+- Regex flags `s`, `p`, and `l`, Unicode offsets, and advanced engine constructs can differ because Ruby Regexp is not jq's bundled Oniguruma build. In particular, zero-width matches on multibyte UTF-8 strings advance by codepoint in rjq and by byte in jq, so `split/2` can contain a different number of empty fields.
 - rjq extensions include `@base32`, `@base32d`, `dateadd`, `datesub`, `ascii`, `to_number`, and compatibility aliases such as `leaf_paths`.
 - `get_jq_origin` reports the rjq installation root. Default module search paths are rjq's actual expanded paths, not jq's symbolic `$ORIGIN` entries.
 - JSON object keys supplied through the Ruby API must be strings. Cyclic Ruby arrays and hashes are rejected.
@@ -43,4 +43,3 @@ The fixture source tag and file checksums are recorded in `spec/fixtures/jq/mani
 ## Ruby API values
 
 Inputs and outputs are composed of `nil`, booleans, `Numeric`, UTF-8 `String`, `Array`, and `Hash` with string keys. Assignment operations copy affected values. Mutable strings are copied at constant and deep-copy boundaries. A compiled program may be reused sequentially; concurrent reuse has not yet been declared a stable guarantee.
-

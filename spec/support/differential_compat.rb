@@ -4,7 +4,8 @@ require 'open3'
 require 'rbconfig'
 
 module DifferentialCompat
-  Case = Struct.new(:name, :filter, :input, :flags, keyword_init: true)
+  Deviation = Struct.new(:reason, :rjq_stdout, keyword_init: true)
+  Case = Struct.new(:name, :filter, :input, :flags, :deviation, keyword_init: true)
   Observation = Struct.new(:stdout, :stderr, :status, :outputs, keyword_init: true)
 
   CASES = [
@@ -94,7 +95,11 @@ module DifferentialCompat
              filter: '["abc" | split(""; ""), split(""; "n")]', input: '', flags: ['-n']),
     Case.new(name: 'regex split Unicode empty matches',
              filter: '[("é"|split("";"")), ("💩"|split("";"")), ("💩é"|split("(?=.)";""))]',
-             input: '', flags: ['-n']),
+             input: '', flags: ['-n'],
+             deviation: Deviation.new(
+               reason: 'Ruby Regexp advances zero-width matches by codepoint; jq Oniguruma advances through UTF-8 bytes',
+               rjq_stdout: "[[\"\",\"é\",\"\"],[\"\",\"💩\",\"\"],[\"\",\"💩\",\"é\"]]\n".b
+             )),
     Case.new(name: 'integer remainder matrix',
              filter: '[1.5%1,(-1.5)%1,5.9%2.1,(-5.9)%2.1,0.1%(-2),(-0.1)%2,' \
                      'infinite%2,(-infinite)%3,2%infinite]', input: '', flags: ['-n']),

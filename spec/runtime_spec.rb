@@ -256,7 +256,7 @@ RSpec.describe Rjq do
     expect(described_class.run('"abc" | split(""; "")', nil).to_a).to eq([["", "a", "b", "c", ""]])
     expect(described_class.run('"abc" | split(""; "n")', nil).to_a).to eq([["abc"]])
     expect(described_class.run('"💩é" | split(""; "")', nil).to_a)
-      .to eq([["", "💩", "", "", "", "é", "", ""]])
+      .to eq([["", "💩", "é", ""]])
   end
 
   it 'matches jq integer remainder and empty string division semantics' do
