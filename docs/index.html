@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="rjq is a Ruby JSON processor with a practical jq 1.7.1-compatible CLI and Ruby API.">
+    <meta name="theme-color" content="#0f172a">
+    <meta property="og:title" content="rjq — jq fluency, built in Ruby">
+    <meta property="og:description" content="A practical jq 1.7.1-compatible JSON processor for the command line and Ruby applications.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://ydah.github.io/rjq/">
+    <link rel="canonical" href="https://ydah.github.io/rjq/">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%7B%7D%3C/text%3E%3C/svg%3E">
+    <link rel="stylesheet" href="./styles.css">
+    <title>rjq — jq fluency, built in Ruby</title>
+  </head>
+  <body class="bg-stone-50 font-sans text-slate-950 antialiased">
+    <a class="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:bg-white focus:px-4 focus:py-2 focus:text-slate-950 focus:outline-2 focus:outline-offset-2 focus:outline-sky-500" href="#main">Skip to content</a>
+
+    <header class="border-b border-slate-200 bg-stone-50">
+      <nav class="mx-auto flex max-w-7xl items-center justify-between px-5 py-5 sm:px-8 lg:px-12" aria-label="Primary navigation">
+        <a class="font-mono text-lg font-semibold focus:outline-2 focus:outline-offset-4 focus:outline-sky-500" href="#top" aria-label="rjq home">
+          <span class="text-sky-600" aria-hidden="true">{</span> rjq <span class="text-sky-600" aria-hidden="true">}</span>
+        </a>
+        <div class="flex items-center gap-5 text-sm font-medium sm:gap-8">
+          <a class="hidden hover:text-sky-700 focus:outline-2 focus:outline-offset-4 focus:outline-sky-500 sm:inline" href="#why-rjq">Why rjq</a>
+          <a class="hidden hover:text-sky-700 focus:outline-2 focus:outline-offset-4 focus:outline-sky-500 sm:inline" href="#use-rjq">Use rjq</a>
+          <a class="border-b border-slate-950 pb-1 hover:border-sky-600 hover:text-sky-700 focus:outline-2 focus:outline-offset-4 focus:outline-sky-500" href="https://github.com/ydah/rjq">GitHub</a>
+        </div>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section id="top" class="overflow-hidden bg-white">
+        <div class="mx-auto grid max-w-7xl items-center gap-14 px-5 py-20 sm:px-8 sm:py-28 lg:grid-cols-2 lg:gap-20 lg:px-12 lg:py-32">
+          <div>
+            <p class="mb-6 inline-flex items-center gap-2 font-mono text-sm text-slate-600">
+              <span class="size-2 rounded-full bg-sky-500" aria-hidden="true"></span>
+              rjq 0.1.0 for Ruby 3.1+
+            </p>
+            <h1 class="max-w-2xl text-balance text-5xl font-semibold leading-none sm:text-6xl lg:text-7xl">
+              <span class="block">Shape JSON.</span><span class="block">Stay in Ruby.</span>
+            </h1>
+            <p class="mt-7 max-w-xl text-pretty text-lg leading-8 text-slate-600 sm:text-xl">
+              A practical jq 1.7.1-compatible processor for the command line and your Ruby code. Familiar filters, streaming input, and a direct Ruby API.
+            </p>
+            <div class="mt-10 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
+              <a class="inline-flex min-h-12 items-center justify-center bg-sky-500 px-6 font-semibold text-slate-950 hover:bg-sky-400 focus:outline-2 focus:outline-offset-4 focus:outline-sky-500" href="#install">Install rjq</a>
+              <a class="inline-flex min-h-12 items-center justify-center border border-slate-300 px-6 font-semibold hover:border-slate-950 focus:outline-2 focus:outline-offset-4 focus:outline-sky-500" href="https://github.com/ydah/rjq#readme">Read the documentation</a>
+            </div>
+          </div>
+
+          <div class="font-mono text-sm shadow-2xl shadow-slate-300/60" aria-label="Command line example">
+            <div class="flex items-center justify-between border-b border-slate-700 bg-slate-900 px-5 py-4 text-slate-400">
+              <span>orders.json</span>
+              <span>rjq</span>
+            </div>
+            <div class="bg-slate-950 p-5 text-slate-200 sm:p-7">
+              <p class="text-pretty leading-7"><span class="select-none text-sky-400" aria-hidden="true">$</span> rjq 'map(select(.paid)) |<br class="sm:hidden"> map({id, total})'</p>
+              <pre class="mt-6 overflow-x-auto border-l-2 border-sky-500 pl-5 leading-7 text-slate-300"><code>[
+  {
+    <span class="text-sky-300">"id"</span>: 1842,
+    <span class="text-sky-300">"total"</span>: 128.50
+  },
+  {
+    <span class="text-sky-300">"id"</span>: 1847,
+    <span class="text-sky-300">"total"</span>: 64.00
+  }
+]</code></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="border-y border-slate-200 bg-stone-50">
+          <dl class="mx-auto grid max-w-7xl sm:grid-cols-3">
+            <div class="px-5 py-8 sm:px-8 lg:px-12">
+              <dt class="text-pretty text-sm text-slate-600">Adapted jq fixtures passing</dt>
+              <dd class="mt-2 font-mono text-3xl font-semibold tabular-nums">487</dd>
+            </div>
+            <div class="border-t border-slate-200 px-5 py-8 sm:border-t-0 sm:border-l sm:px-8 lg:px-12">
+              <dt class="text-pretty text-sm text-slate-600">Supported Ruby versions</dt>
+              <dd class="mt-2 font-mono text-3xl font-semibold tabular-nums">3.1+</dd>
+            </div>
+            <div class="border-t border-slate-200 px-5 py-8 sm:border-t-0 sm:border-l sm:px-8 lg:px-12">
+              <dt class="text-pretty text-sm text-slate-600">Project-specific native extensions</dt>
+              <dd class="mt-2 font-mono text-3xl font-semibold tabular-nums">0</dd>
+            </div>
+          </dl>
+        </div>
+      </section>
+
+      <section id="why-rjq" class="bg-stone-50">
+        <div class="mx-auto max-w-7xl px-5 py-20 sm:px-8 sm:py-28 lg:px-12">
+          <div class="grid gap-12 lg:grid-cols-3 lg:gap-16">
+            <div class="lg:col-span-1">
+              <h2 class="text-balance text-4xl font-semibold leading-tight sm:text-5xl">The jq you know, in the Ruby you use.</h2>
+            </div>
+            <div class="grid gap-10 sm:grid-cols-2 lg:col-span-2">
+              <article class="border-t-2 border-slate-950 pt-5">
+                <h3 class="text-xl font-semibold">Practical compatibility</h3>
+                <p class="mt-3 max-w-md text-pretty leading-7 text-slate-600">Pipes, filters, assignments, paths, regex, modules, streaming, and the built-ins that make jq productive.</p>
+              </article>
+              <article class="border-t-2 border-slate-950 pt-5">
+                <h3 class="text-xl font-semibold">Streaming by design</h3>
+                <p class="mt-3 max-w-md text-pretty leading-7 text-slate-600">An incremental JSON parser and writer keep input moving. Streams stay lazy until jq semantics require collection.</p>
+              </article>
+              <article class="border-t-2 border-slate-950 pt-5">
+                <h3 class="text-xl font-semibold">CLI and library</h3>
+                <p class="mt-3 max-w-md text-pretty leading-7 text-slate-600">Run familiar filters in a shell, compile them once in Ruby, or consume results as an Enumerator-backed stream.</p>
+              </article>
+              <article class="border-t-2 border-slate-950 pt-5">
+                <h3 class="text-xl font-semibold">Bounded when needed</h3>
+                <p class="mt-3 max-w-md text-pretty leading-7 text-slate-600">Set limits for nesting, calls, instructions, output, string size, and regex time when processing untrusted input.</p>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="use-rjq" class="bg-slate-950 text-white">
+        <div class="mx-auto max-w-7xl px-5 py-20 sm:px-8 sm:py-28 lg:px-12">
+          <div class="max-w-2xl">
+            <h2 class="text-balance text-4xl font-semibold leading-tight sm:text-5xl">One filter. Two ways to run it.</h2>
+            <p class="mt-5 max-w-xl text-pretty text-lg leading-8 text-slate-300">Use rjq at the prompt, then bring the same expression into your application without changing mental models.</p>
+          </div>
+
+          <div class="mt-14 grid border-y border-slate-700 lg:grid-cols-2">
+            <article class="py-8 lg:pr-10">
+              <h3 class="text-xl font-semibold">From the command line</h3>
+              <pre class="mt-6 overflow-x-auto bg-slate-900 p-5 font-mono text-sm leading-7 text-slate-300"><code><span class="select-none text-sky-400" aria-hidden="true">$</span> rjq -r '.users[] | select(.active) | .name' users.json
+Ada
+Grace</code></pre>
+            </article>
+            <article class="border-t border-slate-700 py-8 lg:border-t-0 lg:border-l lg:pl-10">
+              <h3 class="text-xl font-semibold">From Ruby</h3>
+              <pre class="mt-6 overflow-x-auto bg-slate-900 p-5 font-mono text-sm leading-7 text-slate-300"><code><span class="text-sky-300">require</span> "rjq"
+
+filter = Rjq.compile(".users[] | select(.active) | .name")
+filter.run(data).to_a
+<span class="text-slate-500"># =&gt; ["Ada", "Grace"]</span></code></pre>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="install" class="bg-white">
+        <div class="mx-auto grid max-w-7xl items-end gap-10 px-5 py-20 sm:px-8 sm:py-28 lg:grid-cols-2 lg:px-12">
+          <div>
+            <h2 class="text-balance text-4xl font-semibold leading-tight sm:text-6xl">Install the gem. Start shaping JSON.</h2>
+            <p class="mt-5 max-w-lg text-pretty text-lg leading-8 text-slate-600">rjq is open source under the MIT License. The CLI and Ruby API ship together.</p>
+          </div>
+          <div>
+            <pre class="overflow-x-auto border-l-4 border-sky-500 bg-stone-100 px-5 py-6 font-mono text-base text-slate-900"><code>gem install rjq</code></pre>
+            <div class="mt-6 flex flex-wrap gap-x-6 gap-y-3 text-sm font-medium">
+              <a class="border-b border-slate-950 pb-1 hover:border-sky-600 hover:text-sky-700 focus:outline-2 focus:outline-offset-4 focus:outline-sky-500" href="https://github.com/ydah/rjq">View on GitHub</a>
+              <a class="border-b border-slate-950 pb-1 hover:border-sky-600 hover:text-sky-700 focus:outline-2 focus:outline-offset-4 focus:outline-sky-500" href="https://github.com/ydah/rjq/blob/main/COMPATIBILITY.md">Check compatibility</a>
+              <a class="border-b border-slate-950 pb-1 hover:border-sky-600 hover:text-sky-700 focus:outline-2 focus:outline-offset-4 focus:outline-sky-500" href="https://github.com/ydah/rjq/releases/tag/v0.1.0">Release v0.1.0</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="border-t border-slate-200 bg-stone-50">
+      <div class="mx-auto flex max-w-7xl flex-col gap-4 px-5 py-8 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-12">
+        <p class="text-pretty">rjq is made by Yudai Takada and released under the MIT License.</p>
+        <a class="font-medium text-slate-950 hover:text-sky-700 focus:outline-2 focus:outline-offset-4 focus:outline-sky-500" href="https://github.com/ydah/rjq">Source on GitHub</a>
+      </div>
+    </footer>
+  </body>
+</html>
